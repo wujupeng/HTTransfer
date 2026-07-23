@@ -1,4 +1,5 @@
 #include "ResumeEngine.h"
+#include "Core/Common/Types.h"
 #include <fstream>
 #include <cstring>
 #include <algorithm>
@@ -9,6 +10,20 @@
 #endif
 
 namespace ht {
+
+static std::string pathStemToUtf8(const std::filesystem::path& p) {
+#ifdef _WIN32
+    auto wstr = p.stem().wstring();
+    if (wstr.empty()) return "";
+    int len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return "";
+    std::string result(len - 1, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, result.data(), len, nullptr, nullptr);
+    return result;
+#else
+    return p.stem().string();
+#endif
+}
 
 ResumeEngine::ResumeEngine(std::shared_ptr<ILogger> logger, const std::filesystem::path& resume_dir)
     : logger_(std::move(logger)), resume_dir_(resume_dir) {
@@ -106,14 +121,36 @@ Result<void> ResumeEngine::markChunkCompleted(const std::string& task_id, uint64
     return createResumeFile(task_id, data);
 }
 
+bool ResumeEngine::atomicWrite(const std::filesystem::path& target_path, const std::vector<uint8_t>& data) {
+    auto temp_path = target_path;
+    temp_path += ".tmp";
+
+    {
+        std::ofstream file(temp_path, std::ios::binary);
+        if (!file) return false;
+        file.write(reinterpret_cast<const char*>(data.data()), data.size());
+        if (!file) return false;
+        file.flush();
+    }
+
+    std::error_code ec;
+    std::filesystem::rename(temp_path, target_path, ec);
+    if (ec) {
+        std::filesystem::remove(temp_path, ec);
+        return false;
+    }
+    return true;
+}
+
 Result<bool> ResumeEngine::isSourceFileChanged(const std::string& task_id, const std::filesystem::path& source_path) {
     auto it = cache_.find(task_id);
     if (it == cache_.end()) return Result<bool>::success(true);
 
-    if (!std::filesystem::exists(source_path)) return Result<bool>::success(true);
+    std::error_code ec;
+    if (!std::filesystem::exists(source_path, ec) || ec) return Result<bool>::success(true);
 
-    auto fsize = std::filesystem::file_size(source_path);
-    auto mtime = std::filesystem::last_write_time(source_path);
+    auto fsize = std::filesystem::file_size(source_path, ec);
+    if (ec) return Result<bool>::success(true);
 
     if (fsize != it->second.file_size) return Result<bool>::success(true);
 
@@ -123,9 +160,8 @@ Result<bool> ResumeEngine::isSourceFileChanged(const std::string& task_id, const
 Result<void> ResumeEngine::invalidateResumeFile(const std::string& task_id) {
     cache_.erase(task_id);
     auto path = getResumePath(task_id);
-    if (std::filesystem::exists(path)) {
-        std::filesystem::remove(path);
-    }
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
     return Result<void>::success();
 }
 
@@ -137,8 +173,7 @@ Result<std::vector<std::string>> ResumeEngine::scanUnfinishedTasks() {
 
     for (const auto& entry : std::filesystem::directory_iterator(resume_dir_)) {
         if (entry.path().extension() == ".htresume") {
-            auto stem = entry.path().stem().string();
-            tasks.push_back(stem);
+            tasks.push_back(pathStemToUtf8(entry.path()));
         }
     }
 

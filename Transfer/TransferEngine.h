@@ -62,7 +62,11 @@ public:
                                                  uint64_t total_bytes,
                                                  double speed_mbps,
                                                  double avg_speed_mbps)>;
+    using ChunkCompletedCallback = std::function<void(const std::string& task_id,
+                                                       uint64_t chunk_index,
+                                                       uint64_t offset)>;
     virtual void setProgressCallback(ProgressCallback callback) = 0;
+    virtual void setChunkCompletedCallback(ChunkCompletedCallback callback) = 0;
 };
 
 class RetryController {
@@ -123,6 +127,7 @@ public:
     void setParallelism(uint32_t count) override;
     uint32_t getParallelism() const override;
     void setProgressCallback(ProgressCallback callback) override;
+    void setChunkCompletedCallback(ChunkCompletedCallback callback) override;
 
 private:
     Result<void> startTransferSingleThread(const TransferTask& task, const ChunkManifest& manifest,
@@ -138,6 +143,7 @@ private:
     std::unordered_map<ProtocolType, std::unique_ptr<ITransferAdapter>> adapters_;
     std::unique_ptr<WorkerPool> worker_pool_;
     ProgressCallback progress_callback_;
+    ChunkCompletedCallback chunk_completed_callback_;
     uint32_t parallelism_ = kDefaultParallelism;
 
     std::mutex task_control_mutex_;

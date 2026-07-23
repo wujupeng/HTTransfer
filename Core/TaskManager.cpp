@@ -25,13 +25,14 @@ static std::string pathToUtf8(const std::filesystem::path& p) {
 #endif
 }
 
-static const TaskStatus kValidTransitions[13][2] = {
+static const TaskStatus kValidTransitions[14][2] = {
     {TaskStatus::Created, TaskStatus::Queued},
     {TaskStatus::Queued, TaskStatus::Stabilizing},
     {TaskStatus::Stabilizing, TaskStatus::Transferring},
     {TaskStatus::Stabilizing, TaskStatus::Failed},
     {TaskStatus::Transferring, TaskStatus::Paused},
     {TaskStatus::Transferring, TaskStatus::Verifying},
+    {TaskStatus::Transferring, TaskStatus::Completed},
     {TaskStatus::Transferring, TaskStatus::Failed},
     {TaskStatus::Transferring, TaskStatus::Cancelled},
     {TaskStatus::Paused, TaskStatus::Transferring},
@@ -58,6 +59,10 @@ TaskManager::TaskManager(std::shared_ptr<FileEngine> file_engine,
                double speed_mbps, double avg_speed_mbps) {
             onProgressUpdate(task_id, transferred, total, speed_mbps, avg_speed_mbps);
         });
+    transfer_engine_->setChunkCompletedCallback(
+        [this](const std::string& task_id, uint64_t chunk_index, uint64_t offset) {
+            resume_engine_->markChunkCompleted(task_id, chunk_index, offset);
+        });
 }
 
 TaskManager::~TaskManager() {
@@ -71,7 +76,14 @@ TaskManager::~TaskManager() {
 
 Result<std::string> TaskManager::createTask(const std::string& source_path,
                                              const std::string& target_path,
-                                             TransferPreset preset) {
+                                             TransferPreset preset,
+                                             uint32_t parallelism,
+                                             uint64_t speed_limit) {
+    if (logger_) {
+        logger_->log(ILogger::Level::Info, "SYSTEM",
+            std::format("createTask ENTRY: preset={}, parallelism={}, speed_limit={}",
+                static_cast<uint32_t>(preset), parallelism, speed_limit));
+    }
     std::lock_guard lock(mutex_);
 
     if (source_path.empty() || target_path.empty()) {
@@ -94,13 +106,14 @@ Result<std::string> TaskManager::createTask(const std::string& source_path,
     task.updated_at = task.created_at;
 
     auto preset_config = getPresetDefault(preset);
-    task.parallelism = preset_config.parallelism;
-    task.speed_limit = preset_config.speed_limit;
+    task.parallelism = (parallelism > 0) ? parallelism : preset_config.parallelism;
+    task.speed_limit = (speed_limit > 0) ? speed_limit : preset_config.speed_limit;
 
     active_tasks_[task.task_id] = task;
 
     if (logger_) {
-        logger_->log(ILogger::Level::Info, task.task_id, "Task created");
+        logger_->log(ILogger::Level::Info, task.task_id,
+            std::format("Task created: parallelism={}, speed_limit={}", task.parallelism, task.speed_limit));
     }
 
     return Result<std::string>::success(task.task_id);
@@ -159,6 +172,8 @@ void TaskManager::executeTask(const std::string& task_id) {
 }
 
 void TaskManager::executeTaskInner(const std::string& task_id) {
+    if (logger_) logger_->log(ILogger::Level::Info, task_id, "executeTaskInner: starting");
+
     TransferTask task;
     {
         std::lock_guard lock(mutex_);
@@ -167,6 +182,13 @@ void TaskManager::executeTaskInner(const std::string& task_id) {
         task = it->second;
     }
 
+    if (logger_) logger_->log(ILogger::Level::Info, task_id,
+        std::format("executeTaskInner: parallelism={}, speed_limit={}, src={}, dst={}",
+            task.parallelism, task.speed_limit, task.source_path, task.target_path));
+
+    transfer_engine_->setParallelism(task.parallelism);
+
+    if (logger_) logger_->log(ILogger::Level::Info, task_id, "executeTaskInner: setParallelism done");
     {
         std::lock_guard lock(mutex_);
         auto it = active_tasks_.find(task_id);
@@ -199,20 +221,18 @@ void TaskManager::executeTaskInner(const std::string& task_id) {
     if (logger_) logger_->log(ILogger::Level::Info, task_id, "Step 2: Computing source hash");
 
     std::string start_hash;
+    std::error_code check_ec;
+    bool source_is_dir = std::filesystem::is_directory(utf8ToPath(task.source_path), check_ec) && !check_ec;
+
     auto preset_config = getPresetDefault(task.preset);
-    if (preset_config.enable_sha256) {
+    if (preset_config.enable_sha256 && !source_is_dir) {
         auto hash_result = verify_engine_->computeFileHash(utf8ToPath(task.source_path));
         if (hash_result.isErr()) {
-            std::lock_guard lock(mutex_);
-            auto it = active_tasks_.find(task_id);
-            if (it != active_tasks_.end()) {
-                transitionState(it->second, TaskStatus::Failed);
-                it->second.error_code = hash_result.errorCodeString();
-                it->second.error_message = hash_result.errorMessage();
-            }
-            return;
+            if (logger_) logger_->log(ILogger::Level::Warning, task_id,
+                std::string("Source hash failed: ") + hash_result.errorMessage() + ", skipping");
+        } else {
+            start_hash = hash_result.value();
         }
-        start_hash = hash_result.value();
     }
 
     {
@@ -266,10 +286,14 @@ void TaskManager::executeTaskInner(const std::string& task_id) {
             }
         }
 
+        auto dir_target = dst_path / src_path.filename();
+        std::error_code dir_ec;
+        std::filesystem::create_directories(dir_target, dir_ec);
+
         for (const auto& entry : entries) {
             if (shutting_down_) return;
 
-            auto resolved_target = dst_path / entry.relative_path;
+            auto resolved_target = dir_target / entry.relative_path;
             auto parent_dir = resolved_target.parent_path();
             std::error_code ec;
             std::filesystem::create_directories(parent_dir, ec);
@@ -420,7 +444,9 @@ void TaskManager::executeTaskInner(const std::string& task_id) {
         actual_target_path = task.target_path;
     }
 
-    if (!enable_verify) {
+    if (!enable_verify || source_is_dir) {
+        if (logger_ && source_is_dir) logger_->log(ILogger::Level::Info, task_id,
+            "Step 4: Skipping verification for directory transfer");
         std::lock_guard lock(mutex_);
         auto it = active_tasks_.find(task_id);
         if (it != active_tasks_.end()) {
@@ -596,9 +622,29 @@ void TaskManager::recoverFromCrash() {
     if (result.isErr()) return;
 
     for (const auto& task_id : result.value()) {
+        auto load_result = resume_engine_->loadResumeFile(task_id);
+        if (load_result.isErr() || !load_result.value().has_value()) {
+            resume_engine_->invalidateResumeFile(task_id);
+            continue;
+        }
+
         if (logger_) {
             logger_->log(ILogger::Level::Info, task_id, "Recovering unfinished task from crash");
         }
+
+        auto& resume_data = load_result.value().value();
+        TransferTask task;
+        task.task_id = task_id;
+        task.status = TaskStatus::Created;
+        task.preset = TransferPreset::Balanced;
+        task.parallelism = kDefaultParallelism;
+        task.total_bytes = resume_data.file_size;
+        task.created_at = resume_data.source_create_time;
+        task.updated_at = std::chrono::system_clock::now();
+
+        active_tasks_[task_id] = task;
+        task_progress_[task_id].total_bytes = resume_data.file_size;
+        task_progress_[task_id].transferred_bytes = resume_data.current_offset;
     }
 }
 

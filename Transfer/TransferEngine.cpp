@@ -310,6 +310,12 @@ Result<void> TransferEngine::startTransferMultiThread(const TransferTask& task,
                 failed_chunks.fetch_add(1);
             }
 
+            try {
+                if (chunk_completed_callback_ && chunk_ok) {
+                    chunk_completed_callback_(task.task_id, idx, chunk.offset + chunk.size);
+                }
+            } catch (...) {}
+
             uint64_t transferred = total_transferred.fetch_add(chunk.size) + chunk.size;
 
             try {
@@ -383,6 +389,10 @@ uint32_t TransferEngine::getParallelism() const { return parallelism_; }
 
 void TransferEngine::setProgressCallback(ProgressCallback callback) {
     progress_callback_ = std::move(callback);
+}
+
+void TransferEngine::setChunkCompletedCallback(ChunkCompletedCallback callback) {
+    chunk_completed_callback_ = std::move(callback);
 }
 
 Result<void> SMBAdapter::connect(const std::string& endpoint, const AuthInfo& auth) {

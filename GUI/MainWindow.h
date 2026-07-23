@@ -182,6 +182,12 @@ public:
         verify_cb_ = new QCheckBox(tr("Verify"), this);
         verify_cb_->setChecked(true);
         speed_limit_cb_ = new QCheckBox(tr("Speed Limit"), this);
+        speed_spin_ = new QSpinBox(this);
+        speed_spin_->setRange(1, 10000);
+        speed_spin_->setValue(100);
+        speed_spin_->setSuffix(" MB/s");
+        speed_spin_->setEnabled(false);
+        connect(speed_limit_cb_, &QCheckBox::toggled, speed_spin_, &QSpinBox::setEnabled);
         thread_spin_ = new QSpinBox(this);
         thread_spin_->setRange(1, 8);
         thread_spin_->setValue(4);
@@ -190,6 +196,7 @@ public:
         options_layout->addWidget(resume_cb_);
         options_layout->addWidget(verify_cb_);
         options_layout->addWidget(speed_limit_cb_);
+        options_layout->addWidget(speed_spin_);
         options_layout->addWidget(new QLabel(tr("Threads:"), this));
         options_layout->addWidget(thread_spin_);
         main_layout->addWidget(options_group_);
@@ -316,7 +323,12 @@ private slots:
             preset = TransferPreset::Secure;
         }
 
-        auto result = task_manager_->createTask(source, target, preset);
+        uint32_t parallelism = multi_thread_cb_->isChecked()
+            ? static_cast<uint32_t>(thread_spin_->value()) : 1;
+        uint64_t speed_limit = speed_limit_cb_->isChecked()
+            ? static_cast<uint64_t>(speed_spin_->value()) * 1024 * 1024 : 0;
+
+        auto result = task_manager_->createTask(source, target, preset, parallelism, speed_limit);
         if (result.isErr()) {
             QMessageBox::critical(this, tr("Error"), QString::fromStdString(result.errorMessage()));
             return;
@@ -472,6 +484,7 @@ private:
     QCheckBox* resume_cb_ = nullptr;
     QCheckBox* verify_cb_ = nullptr;
     QCheckBox* speed_limit_cb_ = nullptr;
+    QSpinBox* speed_spin_ = nullptr;
     QSpinBox* thread_spin_ = nullptr;
     QPushButton* start_btn_ = nullptr;
     QPushButton* pause_btn_ = nullptr;

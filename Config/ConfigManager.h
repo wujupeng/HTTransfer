@@ -18,7 +18,7 @@ struct SpeedSchedule {
     bool enabled = true;
 };
 
-enum class TransferPreset : uint8_t {
+enum class TransferPreset : uint32_t {
     Fast,
     Secure,
     Balanced

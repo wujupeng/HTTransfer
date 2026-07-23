@@ -42,7 +42,9 @@ public:
     virtual ~ITaskManager() = default;
     virtual Result<std::string> createTask(const std::string& source_path,
                                             const std::string& target_path,
-                                            TransferPreset preset) = 0;
+                                            TransferPreset preset,
+                                            uint32_t parallelism = 4,
+                                            uint64_t speed_limit = 0) = 0;
     virtual Result<void> startTask(const std::string& task_id) = 0;
     virtual Result<void> pauseTask(const std::string& task_id) = 0;
     virtual Result<void> resumeTask(const std::string& task_id) = 0;
@@ -69,7 +71,9 @@ public:
 
     Result<std::string> createTask(const std::string& source_path,
                                     const std::string& target_path,
-                                    TransferPreset preset) override;
+                                    TransferPreset preset,
+                                    uint32_t parallelism = 4,
+                                    uint64_t speed_limit = 0) override;
     Result<void> startTask(const std::string& task_id) override;
     Result<void> pauseTask(const std::string& task_id) override;
     Result<void> resumeTask(const std::string& task_id) override;
