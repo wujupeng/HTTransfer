@@ -52,6 +52,14 @@ Result<void> ResumeEngine::createResumeFile(const std::string& task_id, const Re
     file.write(reinterpret_cast<const char*>(&id_len), sizeof(id_len));
     file.write(task_id.data(), id_len);
 
+    uint16_t src_len = static_cast<uint16_t>(data.source_path.size());
+    file.write(reinterpret_cast<const char*>(&src_len), sizeof(src_len));
+    file.write(data.source_path.data(), src_len);
+
+    uint16_t dst_len = static_cast<uint16_t>(data.target_path.size());
+    file.write(reinterpret_cast<const char*>(&dst_len), sizeof(dst_len));
+    file.write(data.target_path.data(), dst_len);
+
     file.write(reinterpret_cast<const char*>(&data.file_size), sizeof(data.file_size));
     file.write(reinterpret_cast<const char*>(&data.current_offset), sizeof(data.current_offset));
 
@@ -81,9 +89,12 @@ Result<void> ResumeEngine::createResumeFile(const std::string& task_id, const Re
 }
 
 Result<std::optional<ResumeFileData>> ResumeEngine::loadResumeFile(const std::string& task_id) {
-    auto it = cache_.find(task_id);
-    if (it != cache_.end()) {
-        return Result<std::optional<ResumeFileData>>::success(it->second);
+    {
+        std::lock_guard lock(mutex_);
+        auto it = cache_.find(task_id);
+        if (it != cache_.end()) {
+            return Result<std::optional<ResumeFileData>>::success(it->second);
+        }
     }
 
     auto path = getResumePath(task_id);
@@ -93,6 +104,7 @@ Result<std::optional<ResumeFileData>> ResumeEngine::loadResumeFile(const std::st
 
     auto result = ResumeFileParser::parse(path);
     if (result.isOk()) {
+        std::lock_guard lock(mutex_);
         cache_[task_id] = result.value();
         return Result<std::optional<ResumeFileData>>::success(result.value());
     }
@@ -100,11 +112,13 @@ Result<std::optional<ResumeFileData>> ResumeEngine::loadResumeFile(const std::st
 }
 
 Result<void> ResumeEngine::updateResumeFile(const std::string& task_id, const ResumeFileData& data) {
+    std::lock_guard lock(mutex_);
     cache_[task_id] = data;
     return createResumeFile(task_id, data);
 }
 
 Result<void> ResumeEngine::markChunkCompleted(const std::string& task_id, uint64_t chunk_index, uint64_t offset) {
+    std::lock_guard lock(mutex_);
     auto it = cache_.find(task_id);
     if (it == cache_.end()) {
         return Result<void>::failure(ErrorCode::IOError, "ResumeFile not found in cache");
@@ -143,6 +157,7 @@ bool ResumeEngine::atomicWrite(const std::filesystem::path& target_path, const s
 }
 
 Result<bool> ResumeEngine::isSourceFileChanged(const std::string& task_id, const std::filesystem::path& source_path) {
+    std::lock_guard lock(mutex_);
     auto it = cache_.find(task_id);
     if (it == cache_.end()) return Result<bool>::success(true);
 
@@ -158,6 +173,7 @@ Result<bool> ResumeEngine::isSourceFileChanged(const std::string& task_id, const
 }
 
 Result<void> ResumeEngine::invalidateResumeFile(const std::string& task_id) {
+    std::lock_guard lock(mutex_);
     cache_.erase(task_id);
     auto path = getResumePath(task_id);
     std::error_code ec;
@@ -199,17 +215,43 @@ Result<ResumeFileData> ResumeFileParser::parse(const std::filesystem::path& path
 
     uint16_t id_len = 0;
     file.read(reinterpret_cast<char*>(&id_len), sizeof(id_len));
+    if (id_len > 256) {
+        return Result<ResumeFileData>::failure(ErrorCode::IOError, "Invalid resume file: task_id too long");
+    }
     data.task_id.resize(id_len);
     file.read(data.task_id.data(), id_len);
+
+    uint16_t src_len = 0;
+    file.read(reinterpret_cast<char*>(&src_len), sizeof(src_len));
+    if (src_len > 4096) {
+        return Result<ResumeFileData>::failure(ErrorCode::IOError, "Invalid resume file: source_path too long (old format?)");
+    }
+    data.source_path.resize(src_len);
+    file.read(data.source_path.data(), src_len);
+
+    uint16_t dst_len = 0;
+    file.read(reinterpret_cast<char*>(&dst_len), sizeof(dst_len));
+    if (dst_len > 4096) {
+        return Result<ResumeFileData>::failure(ErrorCode::IOError, "Invalid resume file: target_path too long (old format?)");
+    }
+    data.target_path.resize(dst_len);
+    file.read(data.target_path.data(), dst_len);
 
     file.read(reinterpret_cast<char*>(&data.file_size), sizeof(data.file_size));
     file.read(reinterpret_cast<char*>(&data.current_offset), sizeof(data.current_offset));
 
     uint64_t completed_count = 0;
     file.read(reinterpret_cast<char*>(&completed_count), sizeof(completed_count));
-    data.completed_chunks.resize(completed_count);
+    if (completed_count > 1000000) {
+        return Result<ResumeFileData>::failure(ErrorCode::IOError, "Invalid resume file: too many completed chunks");
+    }
+    data.completed_chunks.resize(static_cast<size_t>(completed_count));
     for (uint64_t i = 0; i < completed_count; ++i) {
-        file.read(reinterpret_cast<char*>(&data.completed_chunks[i]), sizeof(uint64_t));
+        file.read(reinterpret_cast<char*>(&data.completed_chunks[static_cast<size_t>(i)]), sizeof(uint64_t));
+    }
+
+    if (!file.good()) {
+        return Result<ResumeFileData>::failure(ErrorCode::IOError, "Invalid resume file: read error");
     }
 
     char hash_buf[65] = {};

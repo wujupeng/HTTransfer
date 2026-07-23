@@ -17,6 +17,7 @@
 #include "Core/BufferPool.h"
 #include "Core/IDataSource.h"
 #include "Core/IDataSink.h"
+#include "Resume/ResumeEngine.h"
 #include "Logger/ILogger.h"
 
 namespace ht {
@@ -117,7 +118,10 @@ struct TaskControl {
 class TransferEngine : public ITransferEngine {
 public:
     explicit TransferEngine(std::shared_ptr<ILogger> logger,
-                            std::shared_ptr<BufferPool> buffer_pool = nullptr);
+                            std::shared_ptr<BufferPool> buffer_pool = nullptr,
+                            std::shared_ptr<IResumeEngine> resume_engine = nullptr);
+
+    ~TransferEngine() override;
 
     void registerAdapter(ProtocolType protocol, std::unique_ptr<ITransferAdapter> adapter) override;
     Result<void> startTransfer(const TransferTask& task, const ChunkManifest& manifest) override;
@@ -133,13 +137,16 @@ private:
     Result<void> startTransferSingleThread(const TransferTask& task, const ChunkManifest& manifest,
                                             IDataSource* source, IDataSink* sink,
                                             std::shared_ptr<TaskControl> ctrl);
-    Result<void> startTransferMultiThread(const TransferTask& task, const ChunkManifest& manifest,
-                                           IDataSource* source, IDataSink* sink,
-                                           std::shared_ptr<TaskControl> ctrl);
+    Result<void> startTransferReaderWriter(const TransferTask& task, const ChunkManifest& manifest,
+                                            IDataSource* source, IDataSink* sink,
+                                            std::shared_ptr<TaskControl> ctrl);
     std::shared_ptr<TaskControl> getTaskControl(const std::string& task_id);
+    static bool isSMB(const std::string& path);
+    void validateMagic() const;
 
     std::shared_ptr<ILogger> logger_;
     std::shared_ptr<BufferPool> buffer_pool_;
+    std::shared_ptr<IResumeEngine> resume_engine_;
     std::unordered_map<ProtocolType, std::unique_ptr<ITransferAdapter>> adapters_;
     std::unique_ptr<WorkerPool> worker_pool_;
     ProgressCallback progress_callback_;
@@ -148,6 +155,10 @@ private:
 
     std::mutex task_control_mutex_;
     std::unordered_map<std::string, std::shared_ptr<TaskControl>> task_controls_;
+
+#ifndef NDEBUG
+    uint32_t magic_ = 0;
+#endif
 };
 
 class SMBAdapter : public ITransferAdapter {

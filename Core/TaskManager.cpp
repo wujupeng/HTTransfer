@@ -53,15 +53,11 @@ TaskManager::TaskManager(std::shared_ptr<FileEngine> file_engine,
       resume_engine_(std::move(resume_engine)),
       transfer_engine_(std::move(transfer_engine)),
       speed_controller_(std::move(speed_controller)),
-      logger_(std::move(logger)) {
+       logger_(std::move(logger)) {
     transfer_engine_->setProgressCallback(
         [this](const std::string& task_id, uint64_t transferred, uint64_t total,
                double speed_mbps, double avg_speed_mbps) {
             onProgressUpdate(task_id, transferred, total, speed_mbps, avg_speed_mbps);
-        });
-    transfer_engine_->setChunkCompletedCallback(
-        [this](const std::string& task_id, uint64_t chunk_index, uint64_t offset) {
-            resume_engine_->markChunkCompleted(task_id, chunk_index, offset);
         });
 }
 
@@ -81,9 +77,16 @@ Result<std::string> TaskManager::createTask(const std::string& source_path,
                                              uint64_t speed_limit) {
     if (logger_) {
         logger_->log(ILogger::Level::Info, "SYSTEM",
-            std::format("createTask ENTRY: preset={}, parallelism={}, speed_limit={}",
-                static_cast<uint32_t>(preset), parallelism, speed_limit));
+            std::format("createTask ENTRY: preset={}, parallelism={}, speed_limit={}, src_size={}, dst_size={}",
+                static_cast<uint32_t>(preset), parallelism, speed_limit,
+                source_path.size(), target_path.size()));
     }
+
+    auto safe_parallelism = (parallelism > 0 && parallelism <= kMaxParallelism)
+        ? parallelism : kDefaultParallelism;
+    auto safe_speed_limit = (speed_limit <= 100ULL * 1024 * 1024 * 1024)
+        ? speed_limit : 0;
+
     std::lock_guard lock(mutex_);
 
     if (source_path.empty() || target_path.empty()) {
@@ -106,8 +109,8 @@ Result<std::string> TaskManager::createTask(const std::string& source_path,
     task.updated_at = task.created_at;
 
     auto preset_config = getPresetDefault(preset);
-    task.parallelism = (parallelism > 0) ? parallelism : preset_config.parallelism;
-    task.speed_limit = (speed_limit > 0) ? speed_limit : preset_config.speed_limit;
+    task.parallelism = (safe_parallelism > 0) ? safe_parallelism : preset_config.parallelism;
+    task.speed_limit = (safe_speed_limit > 0) ? safe_speed_limit : preset_config.speed_limit;
 
     active_tasks_[task.task_id] = task;
 
@@ -186,9 +189,14 @@ void TaskManager::executeTaskInner(const std::string& task_id) {
         std::format("executeTaskInner: parallelism={}, speed_limit={}, src={}, dst={}",
             task.parallelism, task.speed_limit, task.source_path, task.target_path));
 
-    transfer_engine_->setParallelism(task.parallelism);
+    if (!transfer_engine_) {
+        if (logger_) logger_->log(ILogger::Level::Critical, task_id, "transfer_engine_ is null!");
+        return;
+    }
 
-    if (logger_) logger_->log(ILogger::Level::Info, task_id, "executeTaskInner: setParallelism done");
+    if (logger_) logger_->log(ILogger::Level::Info, task_id, "executeTaskInner: skipping setParallelism (using default)");
+
+    if (logger_) logger_->log(ILogger::Level::Info, task_id, "executeTaskInner: proceeding to Step 1");
     {
         std::lock_guard lock(mutex_);
         auto it = active_tasks_.find(task_id);
@@ -382,6 +390,8 @@ void TaskManager::executeTaskInner(const std::string& task_id) {
 
         ResumeFileData resume_data;
         resume_data.task_id = task_id;
+        resume_data.source_path = task.source_path;
+        resume_data.target_path = pathToUtf8(resolved_target);
         resume_data.file_size = total_bytes;
         resume_data.source_hash = start_hash;
         resume_data.source_create_time = task.created_at;
@@ -617,6 +627,31 @@ Result<std::vector<TaskSummary>> TaskManager::listTasks() const {
     return Result<std::vector<TaskSummary>>::success(std::move(summaries));
 }
 
+Result<std::vector<TaskSummary>> TaskManager::listRecoverableTasks() const {
+    auto scan_result = resume_engine_->scanUnfinishedTasks();
+    if (scan_result.isErr()) {
+        return Result<std::vector<TaskSummary>>::success({});
+    }
+
+    std::vector<TaskSummary> summaries;
+    for (const auto& task_id : scan_result.value()) {
+        auto load_result = resume_engine_->loadResumeFile(task_id);
+        if (load_result.isErr() || !load_result.value().has_value()) continue;
+
+        auto& data = load_result.value().value();
+        TaskSummary s;
+        s.task_id = task_id;
+        s.source_path = data.source_path;
+        s.target_path = data.target_path;
+        s.status = TaskStatus::Created;
+        s.progress_percent = data.file_size > 0
+            ? (static_cast<double>(data.current_offset) / data.file_size) * 100.0
+            : 0.0;
+        summaries.push_back(std::move(s));
+    }
+    return Result<std::vector<TaskSummary>>::success(std::move(summaries));
+}
+
 void TaskManager::recoverFromCrash() {
     auto result = resume_engine_->scanUnfinishedTasks();
     if (result.isErr()) return;
@@ -635,12 +670,24 @@ void TaskManager::recoverFromCrash() {
         auto& resume_data = load_result.value().value();
         TransferTask task;
         task.task_id = task_id;
+        task.source_path = resume_data.source_path;
+        task.target_path = resume_data.target_path;
         task.status = TaskStatus::Created;
         task.preset = TransferPreset::Balanced;
         task.parallelism = kDefaultParallelism;
         task.total_bytes = resume_data.file_size;
         task.created_at = resume_data.source_create_time;
         task.updated_at = std::chrono::system_clock::now();
+
+        auto changed_result = resume_engine_->isSourceFileChanged(task_id, utf8ToPath(task.source_path));
+        if (changed_result.isOk() && changed_result.value()) {
+            if (logger_) {
+                logger_->log(ILogger::Level::Warning, task_id,
+                    "Source file changed since last transfer, invalidating resume file");
+            }
+            resume_engine_->invalidateResumeFile(task_id);
+            continue;
+        }
 
         active_tasks_[task_id] = task;
         task_progress_[task_id].total_bytes = resume_data.file_size;

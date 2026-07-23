@@ -3,6 +3,8 @@
 #include "Core/LocalFileSink.h"
 #include "Core/Common/Types.h"
 #include "Logger/ILogger.h"
+#include "Transfer/ReaderPool.h"
+#include "Transfer/WriterThread.h"
 #include <algorithm>
 #include <format>
 #include <fstream>
@@ -81,10 +83,32 @@ void WorkerPool::workerLoop() {
 }
 
 TransferEngine::TransferEngine(std::shared_ptr<ILogger> logger,
-                               std::shared_ptr<BufferPool> buffer_pool)
+                               std::shared_ptr<BufferPool> buffer_pool,
+                               std::shared_ptr<IResumeEngine> resume_engine)
     : logger_(std::move(logger)),
       buffer_pool_(std::move(buffer_pool)),
-      worker_pool_(std::make_unique<WorkerPool>(kDefaultParallelism)) {}
+      resume_engine_(std::move(resume_engine)),
+      worker_pool_(std::make_unique<WorkerPool>(kDefaultParallelism)) {
+#ifndef NDEBUG
+    magic_ = 0xDEADBEEF;
+#endif
+}
+
+TransferEngine::~TransferEngine() {
+#ifndef NDEBUG
+    magic_ = 0x0;
+#endif
+}
+
+void TransferEngine::validateMagic() const {
+#ifndef NDEBUG
+    assert(magic_ == 0xDEADBEEF && "TransferEngine use-after-free detected!");
+#endif
+}
+
+bool TransferEngine::isSMB(const std::string& path) {
+    return path.size() >= 2 && path[0] == '\\' && path[1] == '\\';
+}
 
 std::shared_ptr<TaskControl> TransferEngine::getTaskControl(const std::string& task_id) {
     std::lock_guard lock(task_control_mutex_);
@@ -101,33 +125,30 @@ void TransferEngine::registerAdapter(ProtocolType protocol, std::unique_ptr<ITra
 
 Result<void> TransferEngine::startTransfer(const TransferTask& task, const ChunkManifest& manifest) {
     try {
+    validateMagic();
     auto ctrl = getTaskControl(task.task_id);
     ctrl->paused = false;
     ctrl->cancelled = false;
 
-    if (parallelism_ > 1) {
-        if (logger_) logger_->log(ILogger::Level::Info, task.task_id, "Transfer: multi-thread mode");
-        return startTransferMultiThread(task, manifest, nullptr, nullptr, ctrl);
-    } else {
-        if (logger_) logger_->log(ILogger::Level::Info, task.task_id, "Transfer: single-thread mode");
-        LocalFileSource source;
-        auto open_src = source.Open(task.source_path);
-        if (open_src.isErr()) {
-            if (logger_) logger_->log(ILogger::Level::Error, task.task_id,
-                std::string("Transfer: source open failed: ") + open_src.errorMessage());
-            return open_src;
-        }
+    if (logger_) logger_->log(ILogger::Level::Info, task.task_id,
+        std::format("Transfer: Reader->Queue->Writer mode (parallelism={})", parallelism_));
 
-        LocalFileSink sink;
-        auto open_dst = sink.Open(task.target_path, task.total_bytes);
-        if (open_dst.isErr()) {
-            if (logger_) logger_->log(ILogger::Level::Error, task.task_id,
-                std::string("Transfer: sink open failed: ") + open_dst.errorMessage());
-            return open_dst;
-        }
-
-        return startTransferSingleThread(task, manifest, &source, &sink, ctrl);
+    LocalFileSource source;
+    auto src_result = source.Open(task.source_path);
+    if (src_result.isErr()) {
+        return Result<void>::failure(src_result.errorCode(), src_result.errorMessage());
     }
+    source.Close();
+
+    LocalFileSink sink;
+    auto sink_result = sink.Open(task.target_path);
+    if (sink_result.isErr()) {
+        return Result<void>::failure(sink_result.errorCode(), sink_result.errorMessage());
+    }
+    sink.Close();
+
+    return startTransferReaderWriter(task, manifest, nullptr, nullptr, ctrl);
+
     } catch (const std::exception& e) {
         return Result<void>::failure(ErrorCode::IOError, std::string("Transfer exception: ") + e.what());
     } catch (...) {
@@ -221,142 +242,48 @@ Result<void> TransferEngine::startTransferSingleThread(const TransferTask& task,
     return Result<void>::success();
 }
 
-Result<void> TransferEngine::startTransferMultiThread(const TransferTask& task,
-                                                       const ChunkManifest& manifest,
-                                                       IDataSource* source, IDataSink* sink,
-                                                       std::shared_ptr<TaskControl> ctrl) {
-    auto start_time = std::chrono::steady_clock::now();
-    std::atomic<uint64_t> total_transferred{0};
-    std::atomic<uint64_t> next_chunk_index{0};
-    std::atomic<uint32_t> failed_chunks{0};
 
-    uint32_t num_workers = std::min(parallelism_, static_cast<uint32_t>(manifest.chunks.size()));
 
-    auto worker_fn = [&](int worker_id) {
-        try {
-        if (logger_) logger_->log(ILogger::Level::Info, task.task_id,
-            std::format("Worker {} starting", worker_id));
-        LocalFileSource local_src;
-        auto src_result = local_src.Open(task.source_path);
-        if (src_result.isErr()) {
-            if (logger_) logger_->log(ILogger::Level::Error, task.task_id,
-                std::format("Worker {} failed to open source", worker_id));
-            return;
-        }
-        LocalFileSink local_dst;
-        auto dst_result = local_dst.Open(task.target_path);
-        if (dst_result.isErr()) {
-            if (logger_) logger_->log(ILogger::Level::Error, task.task_id,
-                std::format("Worker {} failed to open target", worker_id));
-            return;
-        }
+Result<void> TransferEngine::startTransferReaderWriter(const TransferTask& task,
+                                                        const ChunkManifest& manifest,
+                                                        IDataSource* source, IDataSink* sink,
+                                                        std::shared_ptr<TaskControl> ctrl) {
+    validateMagic();
 
-        if (logger_) logger_->log(ILogger::Level::Info, task.task_id,
-            std::format("Worker {} opened files, starting read/write loop", worker_id));
+    uint32_t reader_count = isSMB(task.target_path) ? 1 : parallelism_;
+    reader_count = std::min(reader_count, static_cast<uint32_t>(manifest.chunks.size()));
+    if (reader_count == 0) reader_count = 1;
 
-        constexpr size_t kWorkerBufferSize = 4 * 1024 * 1024;
-        std::vector<uint8_t> local_buffer(kWorkerBufferSize);
+    if (logger_) logger_->log(ILogger::Level::Info, task.task_id,
+        std::format("startTransferReaderWriter: reader_count={}, isSMB={}",
+            reader_count, isSMB(task.target_path)));
 
-        while (true) {
-            if (ctrl->cancelled.load()) break;
-            while (ctrl->paused.load() && !ctrl->cancelled.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            if (ctrl->cancelled.load()) break;
+    ConcurrentQueue queue(reader_count * 4);
+    queue.setActiveReaders(reader_count);
 
-            uint64_t idx = next_chunk_index.fetch_add(1);
-            if (idx >= manifest.chunks.size()) break;
-
-            const auto& chunk = manifest.chunks[idx];
-            if (chunk.status == ChunkStatus::Verified) {
-                total_transferred.fetch_add(chunk.size);
-                continue;
-            }
-
-            bool chunk_ok = false;
-            for (uint32_t retry = 0; retry < kMaxChunkRetries && !chunk_ok; ++retry) {
-                size_t bytes_to_process = static_cast<size_t>(chunk.size);
-                offset_t current_offset = chunk.offset;
-                uint64_t chunk_transferred = 0;
-
-                while (bytes_to_process > 0) {
-                    size_t io_size = std::min(bytes_to_process, kWorkerBufferSize);
-
-                    auto read_result = local_src.Read(current_offset, local_buffer.data(), io_size);
-                    if (read_result.isErr() || read_result.value() == 0) {
-                        break;
-                    }
-
-                    auto write_result = local_dst.Write(current_offset, local_buffer.data(),
-                        read_result.value());
-                    if (write_result.isErr()) {
-                        break;
-                    }
-
-                    size_t written = read_result.value();
-                    current_offset += written;
-                    bytes_to_process -= written;
-                    chunk_transferred += written;
-                }
-
-                if (chunk_transferred >= chunk.size) {
-                    chunk_ok = true;
-                } else if (retry + 1 < kMaxChunkRetries) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(50 * (retry + 1)));
-                }
-            }
-
-            if (!chunk_ok) {
-                failed_chunks.fetch_add(1);
-            }
-
-            try {
-                if (chunk_completed_callback_ && chunk_ok) {
-                    chunk_completed_callback_(task.task_id, idx, chunk.offset + chunk.size);
-                }
-            } catch (...) {}
-
-            uint64_t transferred = total_transferred.fetch_add(chunk.size) + chunk.size;
-
-            try {
-                if (progress_callback_ && transferred % (4 * kChunkSize) < chunk.size) {
-                    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - start_time).count();
-                    double speed = elapsed_ms > 0 ? (transferred / 1048576.0) / (elapsed_ms / 1000.0) : 0;
-                    progress_callback_(task.task_id, transferred, task.total_bytes, speed, speed);
-                }
-            } catch (...) {}
-        }
-        } catch (const std::exception& e) {
-            if (logger_) logger_->log(ILogger::Level::Critical, task.task_id,
-                std::format("Worker {} exception: {}", worker_id, e.what()));
-        } catch (...) {
-            if (logger_) logger_->log(ILogger::Level::Critical, task.task_id,
-                std::format("Worker {} unknown exception", worker_id));
-        }
-    };
-
-    std::vector<std::thread> workers;
-    workers.reserve(num_workers);
-    for (uint32_t i = 0; i < num_workers; ++i) {
-        workers.emplace_back(worker_fn, i);
-    }
-    for (auto& w : workers) {
-        if (w.joinable()) w.join();
+    LocalFileSink local_sink;
+    auto sink_result = local_sink.Open(task.target_path);
+    if (sink_result.isErr()) {
+        return Result<void>::failure(sink_result.errorCode(), sink_result.errorMessage());
     }
 
-    uint64_t final_transferred = total_transferred.load();
-    if (progress_callback_) {
-        auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - start_time).count();
-        double speed = elapsed_ms > 0 ? (final_transferred / 1048576.0) / (elapsed_ms / 1000.0) : 0;
-        progress_callback_(task.task_id, final_transferred, task.total_bytes, speed, speed);
-    }
+    ReaderPool reader_pool(task.source_path, manifest, queue, logger_, reader_count, ctrl);
 
-    if (source) source->Close();
-    if (sink) {
-        sink->Flush();
-        sink->Close();
+    WriterThread writer_thread(&local_sink, queue, resume_engine_,
+        task.task_id, task.total_bytes, logger_, ctrl,
+        progress_callback_, chunk_completed_callback_);
+
+    reader_pool.start();
+    writer_thread.start();
+
+    reader_pool.join();
+    writer_thread.join();
+
+    local_sink.Flush();
+    local_sink.Close();
+
+    if (writer_thread.hasError()) {
+        return Result<void>::failure(ErrorCode::IOError, "Writer thread encountered errors");
     }
 
     return Result<void>::success();
@@ -381,8 +308,11 @@ Result<void> TransferEngine::cancelTransfer(const std::string& task_id) {
 }
 
 void TransferEngine::setParallelism(uint32_t count) {
-    parallelism_ = std::min(count, kMaxParallelism);
-    worker_pool_ = std::make_unique<WorkerPool>(parallelism_);
+    auto safe_count = std::min(count, kMaxParallelism);
+    if (safe_count == 0) safe_count = 1;
+    parallelism_ = safe_count;
+    if (logger_) logger_->log(ILogger::Level::Info, "SYSTEM",
+        std::format("setParallelism: count={}", safe_count));
 }
 
 uint32_t TransferEngine::getParallelism() const { return parallelism_; }

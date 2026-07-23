@@ -5,6 +5,7 @@
 #include <optional>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include "Core/Common/Result.h"
 #include "Core/Domain/ResumeFile.h"
 #include "Logger/ILogger.h"
@@ -53,6 +54,7 @@ private:
     std::shared_ptr<ILogger> logger_;
     std::filesystem::path resume_dir_;
     std::unordered_map<std::string, ResumeFileData> cache_;
+    std::mutex mutex_;
 };
 
 }

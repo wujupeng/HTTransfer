@@ -52,6 +52,7 @@ public:
     virtual Result<TaskStatus> getTaskStatus(const std::string& task_id) const = 0;
     virtual Result<TaskProgress> getTaskProgress(const std::string& task_id) const = 0;
     virtual Result<std::vector<TaskSummary>> listTasks() const = 0;
+    virtual Result<std::vector<TaskSummary>> listRecoverableTasks() const = 0;
     virtual void recoverFromCrash() = 0;
 
     using TaskCallback = std::function<void(const std::string& task_id, TaskStatus status)>;
@@ -81,6 +82,7 @@ public:
     Result<TaskStatus> getTaskStatus(const std::string& task_id) const override;
     Result<TaskProgress> getTaskProgress(const std::string& task_id) const override;
     Result<std::vector<TaskSummary>> listTasks() const override;
+    Result<std::vector<TaskSummary>> listRecoverableTasks() const override;
     void recoverFromCrash() override;
     void registerCallback(TaskCallback callback) override;
 

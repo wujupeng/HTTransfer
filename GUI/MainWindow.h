@@ -78,6 +78,9 @@ public:
                 {"Select source type", "选择源类型"},
                 {"File", "文件"},
                 {"Directory", "目录"},
+                {"Crash Recovery", "崩溃恢复"},
+                {"The following unfinished tasks were found from a previous session:\n\n", "发现以下上次未完成的任务:\n\n"},
+                {"Would you like to recover these tasks?", "是否恢复这些任务？"},
             };
         }
         current_lang_ = lang;
@@ -240,6 +243,8 @@ public:
 
         progress_timer_ = new QTimer(this);
         connect(progress_timer_, &QTimer::timeout, this, &MainWindow::updateProgress);
+
+        QTimer::singleShot(100, this, &MainWindow::checkRecoverableTasks);
     }
 
 private slots:
@@ -328,6 +333,10 @@ private slots:
         uint64_t speed_limit = speed_limit_cb_->isChecked()
             ? static_cast<uint64_t>(speed_spin_->value()) * 1024 * 1024 : 0;
 
+        qDebug() << "onStart: preset=" << static_cast<uint32_t>(preset)
+                 << "parallelism=" << parallelism
+                 << "speed_limit=" << speed_limit;
+
         auto result = task_manager_->createTask(source, target, preset, parallelism, speed_limit);
         if (result.isErr()) {
             QMessageBox::critical(this, tr("Error"), QString::fromStdString(result.errorMessage()));
@@ -372,6 +381,42 @@ private slots:
             progress_timer_->stop();
             current_task_id_.clear();
         }
+    }
+
+    void checkRecoverableTasks() {
+        try {
+        auto result = task_manager_->listRecoverableTasks();
+        if (result.isErr()) return;
+
+        auto& tasks = result.value();
+        if (tasks.empty()) return;
+
+        QString msg = tr("The following unfinished tasks were found from a previous session:\n\n");
+        for (const auto& t : tasks) {
+            msg += QString("%1 -> %2 (%3%)\n")
+                .arg(QString::fromStdString(t.source_path))
+                .arg(QString::fromStdString(t.target_path))
+                .arg(static_cast<int>(t.progress_percent));
+        }
+        msg += "\n" + tr("Would you like to recover these tasks?");
+
+        auto ret = QMessageBox::question(this, tr("Crash Recovery"), msg,
+            QMessageBox::Yes | QMessageBox::No);
+        if (ret == QMessageBox::Yes) {
+            task_manager_->recoverFromCrash();
+            if (!tasks.empty()) {
+                current_task_id_ = tasks[0].task_id;
+                auto start_result = task_manager_->startTask(current_task_id_);
+                if (start_result.isOk()) {
+                    progress_timer_->start(500);
+                }
+            }
+        } else {
+            for (const auto& t : tasks) {
+                task_manager_->cancelTask(t.task_id);
+            }
+        }
+        } catch (...) {}
     }
 
     void updateProgress() {

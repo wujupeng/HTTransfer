@@ -97,6 +97,7 @@ Logger::Logger(const std::string& db_path) : db_path_(db_path) {
 
 void Logger::log(Level level, const std::string& task_id, const std::string& message,
                  const std::string& chunk_id, const std::source_location& loc) {
+    std::lock_guard lock(write_mutex_);
     const char* level_str[] = {"DEBUG", "INFO", "WARN", "ERROR", "CRITICAL"};
     auto idx = static_cast<int>(level);
     auto now = std::chrono::system_clock::now();

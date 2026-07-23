@@ -28,7 +28,7 @@ public:
         auto verify_engine = std::make_shared<VerifyEngine>();
         auto logger = std::make_shared<Logger>();
         auto resume_engine = std::make_shared<ResumeEngine>(logger);
-        auto transfer_engine = std::make_shared<TransferEngine>(logger, buffer_pool);
+        auto transfer_engine = std::make_shared<TransferEngine>(logger, buffer_pool, resume_engine);
 
         auto smb_adapter = std::make_unique<SMBAdapter>();
         transfer_engine->registerAdapter(ProtocolType::SMB, std::move(smb_adapter));

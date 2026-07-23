@@ -2,6 +2,9 @@ add_library(ht_transfer STATIC
     TransferEngine.cpp
     WorkerPool.cpp
     RetryController.cpp
+    ConcurrentQueue.cpp
+    ReaderPool.cpp
+    WriterThread.cpp
     Adapters/SMBAdapter.cpp
     Adapters/HTTPAdapter.cpp
     Adapters/FTPAdapter.cpp
