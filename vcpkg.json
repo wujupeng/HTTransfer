@@ -1,0 +1,13 @@
+{
+    "name": "hunter-transfer",
+    "version": "1.0.0",
+    "dependencies": [
+
+        { "name": "openssl" },
+        { "name": "sqlite3" },
+        { "name": "curl" },
+        { "name": "libssh2" },
+        { "name": "zstd" },
+        { "name": "gtest" }
+    ]
+}

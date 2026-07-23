@@ -1,0 +1,11 @@
+Running main() from C:\Users\DELL\Documents\dev\autofile\autofile\HunterTransfer\build-release\_deps\googletest-src\googletest\src\gtest_main.cc
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from TransferEngineTest
+[ RUN      ] TransferEngineTest.Placeholder
+[       OK ] TransferEngineTest.Placeholder (0 ms)
+[----------] 1 test from TransferEngineTest (1 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (7 ms total)
+[  PASSED  ] 1 test.

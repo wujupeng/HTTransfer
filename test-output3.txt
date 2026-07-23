@@ -1,0 +1,30 @@
+Running main() from C:\Users\DELL\Documents\dev\autofile\autofile\HunterTransfer\build-release\_deps\googletest-src\googletest\src\gtest_main.cc
+[==========] Running 12 tests from 6 test suites.
+[----------] Global test environment set-up.
+[----------] 2 tests from TypesTest
+[ RUN      ] TypesTest.OffsetTypeIs64Bit
+[       OK ] TypesTest.OffsetTypeIs64Bit (0 ms)
+[ RUN      ] TypesTest.Placeholder
+[       OK ] TypesTest.Placeholder (0 ms)
+[----------] 2 tests from TypesTest (3 ms total)
+
+[----------] 4 tests from ResultTest
+[ RUN      ] ResultTest.SuccessResult
+[       OK ] ResultTest.SuccessResult (0 ms)
+[ RUN      ] ResultTest.FailureResult
+[       OK ] ResultTest.FailureResult (0 ms)
+[ RUN      ] ResultTest.VoidResult
+[       OK ] ResultTest.VoidResult (0 ms)
+[ RUN      ] ResultTest.Placeholder
+[       OK ] ResultTest.Placeholder (0 ms)
+[----------] 4 tests from ResultTest (4 ms total)
+
+[----------] 2 tests from ChunkManifestTest
+[ RUN      ] ChunkManifestTest.CreateManifest200GB
+[       OK ] ChunkManifestTest.CreateManifest200GB (0 ms)
+[ RUN      ] ChunkManifestTest.LastChunkSmaller
+[       OK ] ChunkManifestTest.LastChunkSmaller (0 ms)
+[----------] 2 tests from ChunkManifestTest (2 ms total)
+
+[----------] 1 test from BufferPoolTest
+[ RUN      ] BufferPoolTest.AcquireAndRelease

@@ -1,0 +1,36 @@
+Hunter Transfer 修复验证清单
+================================
+
+已修复的问题：
+1. 语言切换下拉菜单不可见
+   - 修复：增加边距和样式，确保控件可见
+   - 位置：界面右上角，灰色背景框内
+   - 应该显示："Language:" 下拉菜单（English / 中文）
+
+2. 文件选择对话框显示为文件夹选择
+   - 修复：使用 QFileDialog::getOpenFileName() 并设置 DontUseNativeDialog 标志
+   - 现在应该显示：文件选择对话框，标题 "Select Source File - Hunter Transfer"
+   - 支持文件类型：所有文件、备份文件、压缩文件、磁盘镜像
+
+3. 界面翻译问题
+   - 修复：HtTranslator 类已实现翻译功能
+   - 选择 "中文" 后，界面文本应切换为中文
+
+验证步骤：
+1. 删除旧的 HunterTransfer-1.0.0-windows-x86_64 目录
+2. 解压最新的 HunterTransfer-1.0.0-windows-x86_64.zip 到新目录
+3. 运行 bin\HunterTransfer.exe
+4. 检查：
+   - [ ] 界面右上角是否有 "Language:" 下拉菜单（灰色背景框内）
+   - [ ] 选择 "中文" 后界面文本是否变为中文
+   - [ ] 点击 Source 旁边的 "..." 按钮是否弹出文件选择对话框（不是文件夹选择）
+   - [ ] 文件选择对话框标题是否为 "Select Source File - Hunter Transfer"
+   - [ ] 能否选择 .rar 等压缩文件
+
+如果问题仍然存在：
+1. 提供程序启动后的完整界面截图
+2. 提供文件选择对话框截图
+3. 检查 exe 文件属性中的修改时间是否为最新
+
+最新版本构建时间：2026-07-22 16:48:34
+程序路径：C:\Users\DELL\Documents\dev\autofile\autofile\HunterTransfer\dist\HunterTransfer-1.0.0-windows-x86_64\bin\HunterTransfer.exe

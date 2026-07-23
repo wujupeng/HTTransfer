@@ -1,0 +1,3 @@
+Step 1: Before BufferPool construction
+Step 2: BufferPool constructed
+Step 3: About to call acquire

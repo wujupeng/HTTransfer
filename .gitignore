@@ -1,0 +1,15 @@
+build/
+build-release/
+dist/
+.vs/
+*.user
+*.obj
+*.lib
+*.pdb
+*.exp
+*.ilk
+*.log
+*.db
+*.htresume
+ht_audit_fallback.json
+vcpkg_installed/

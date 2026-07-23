@@ -1,0 +1,202 @@
+#include "ResumeEngine.h"
+#include <fstream>
+#include <cstring>
+#include <algorithm>
+#include <format>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+namespace ht {
+
+ResumeEngine::ResumeEngine(std::shared_ptr<ILogger> logger, const std::filesystem::path& resume_dir)
+    : logger_(std::move(logger)), resume_dir_(resume_dir) {
+    std::filesystem::create_directories(resume_dir_);
+}
+
+std::filesystem::path ResumeEngine::getResumePath(const std::string& task_id) const {
+    return resume_dir_ / (task_id + ".htresume");
+}
+
+Result<void> ResumeEngine::createResumeFile(const std::string& task_id, const ResumeFileData& data) {
+    cache_[task_id] = data;
+    auto path = getResumePath(task_id);
+
+    std::ofstream file(path, std::ios::binary);
+    if (!file) {
+        return Result<void>::failure(ErrorCode::IOError, "Cannot create resume file");
+    }
+
+    ResumeFileHeader header;
+    file.write(reinterpret_cast<const char*>(&header.magic), sizeof(header.magic));
+    file.write(reinterpret_cast<const char*>(&header.version), sizeof(header.version));
+    file.write(reinterpret_cast<const char*>(&header.flags), sizeof(header.flags));
+
+    uint16_t id_len = static_cast<uint16_t>(task_id.size());
+    file.write(reinterpret_cast<const char*>(&id_len), sizeof(id_len));
+    file.write(task_id.data(), id_len);
+
+    file.write(reinterpret_cast<const char*>(&data.file_size), sizeof(data.file_size));
+    file.write(reinterpret_cast<const char*>(&data.current_offset), sizeof(data.current_offset));
+
+    uint64_t completed_count = data.completed_chunks.size();
+    file.write(reinterpret_cast<const char*>(&completed_count), sizeof(completed_count));
+    for (uint64_t idx : data.completed_chunks) {
+        file.write(reinterpret_cast<const char*>(&idx), sizeof(idx));
+    }
+
+    file.write(data.source_hash.data(), 64);
+
+    auto write_time = [](const std::chrono::system_clock::time_point& tp) {
+        int64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            tp.time_since_epoch()).count();
+        return ms;
+    };
+
+    int64_t ct = write_time(data.source_create_time);
+    int64_t mt = write_time(data.source_modify_time);
+    int64_t ut = write_time(data.updated_at);
+    file.write(reinterpret_cast<const char*>(&ct), sizeof(ct));
+    file.write(reinterpret_cast<const char*>(&mt), sizeof(mt));
+    file.write(reinterpret_cast<const char*>(&ut), sizeof(ut));
+
+    file.flush();
+    return Result<void>::success();
+}
+
+Result<std::optional<ResumeFileData>> ResumeEngine::loadResumeFile(const std::string& task_id) {
+    auto it = cache_.find(task_id);
+    if (it != cache_.end()) {
+        return Result<std::optional<ResumeFileData>>::success(it->second);
+    }
+
+    auto path = getResumePath(task_id);
+    if (!std::filesystem::exists(path)) {
+        return Result<std::optional<ResumeFileData>>::success(std::nullopt);
+    }
+
+    auto result = ResumeFileParser::parse(path);
+    if (result.isOk()) {
+        cache_[task_id] = result.value();
+        return Result<std::optional<ResumeFileData>>::success(result.value());
+    }
+    return Result<std::optional<ResumeFileData>>::failure(result.errorCode(), result.errorMessage());
+}
+
+Result<void> ResumeEngine::updateResumeFile(const std::string& task_id, const ResumeFileData& data) {
+    cache_[task_id] = data;
+    return createResumeFile(task_id, data);
+}
+
+Result<void> ResumeEngine::markChunkCompleted(const std::string& task_id, uint64_t chunk_index, uint64_t offset) {
+    auto it = cache_.find(task_id);
+    if (it == cache_.end()) {
+        return Result<void>::failure(ErrorCode::IOError, "ResumeFile not found in cache");
+    }
+
+    auto& data = it->second;
+    auto pos = std::lower_bound(data.completed_chunks.begin(), data.completed_chunks.end(), chunk_index);
+    if (pos == data.completed_chunks.end() || *pos != chunk_index) {
+        data.completed_chunks.insert(pos, chunk_index);
+    }
+    data.current_offset = offset;
+    data.updated_at = std::chrono::system_clock::now();
+
+    return createResumeFile(task_id, data);
+}
+
+Result<bool> ResumeEngine::isSourceFileChanged(const std::string& task_id, const std::filesystem::path& source_path) {
+    auto it = cache_.find(task_id);
+    if (it == cache_.end()) return Result<bool>::success(true);
+
+    if (!std::filesystem::exists(source_path)) return Result<bool>::success(true);
+
+    auto fsize = std::filesystem::file_size(source_path);
+    auto mtime = std::filesystem::last_write_time(source_path);
+
+    if (fsize != it->second.file_size) return Result<bool>::success(true);
+
+    return Result<bool>::success(false);
+}
+
+Result<void> ResumeEngine::invalidateResumeFile(const std::string& task_id) {
+    cache_.erase(task_id);
+    auto path = getResumePath(task_id);
+    if (std::filesystem::exists(path)) {
+        std::filesystem::remove(path);
+    }
+    return Result<void>::success();
+}
+
+Result<std::vector<std::string>> ResumeEngine::scanUnfinishedTasks() {
+    std::vector<std::string> tasks;
+    if (!std::filesystem::exists(resume_dir_)) {
+        return Result<std::vector<std::string>>::success(std::move(tasks));
+    }
+
+    for (const auto& entry : std::filesystem::directory_iterator(resume_dir_)) {
+        if (entry.path().extension() == ".htresume") {
+            auto stem = entry.path().stem().string();
+            tasks.push_back(stem);
+        }
+    }
+
+    return Result<std::vector<std::string>>::success(std::move(tasks));
+}
+
+Result<ResumeFileData> ResumeFileParser::parse(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        return Result<ResumeFileData>::failure(ErrorCode::IOError, "Cannot open resume file");
+    }
+
+    ResumeFileData data;
+    ResumeFileHeader header;
+
+    file.read(reinterpret_cast<char*>(&header.magic), sizeof(header.magic));
+    file.read(reinterpret_cast<char*>(&header.version), sizeof(header.version));
+    file.read(reinterpret_cast<char*>(&header.flags), sizeof(header.flags));
+
+    if (header.magic != kResumeMagic) {
+        return Result<ResumeFileData>::failure(ErrorCode::IOError, "Invalid resume file magic");
+    }
+
+    uint16_t id_len = 0;
+    file.read(reinterpret_cast<char*>(&id_len), sizeof(id_len));
+    data.task_id.resize(id_len);
+    file.read(data.task_id.data(), id_len);
+
+    file.read(reinterpret_cast<char*>(&data.file_size), sizeof(data.file_size));
+    file.read(reinterpret_cast<char*>(&data.current_offset), sizeof(data.current_offset));
+
+    uint64_t completed_count = 0;
+    file.read(reinterpret_cast<char*>(&completed_count), sizeof(completed_count));
+    data.completed_chunks.resize(completed_count);
+    for (uint64_t i = 0; i < completed_count; ++i) {
+        file.read(reinterpret_cast<char*>(&data.completed_chunks[i]), sizeof(uint64_t));
+    }
+
+    char hash_buf[65] = {};
+    file.read(hash_buf, 64);
+    data.source_hash = hash_buf;
+
+    auto read_time = [&file]() {
+        int64_t ms = 0;
+        file.read(reinterpret_cast<char*>(&ms), sizeof(ms));
+        return std::chrono::system_clock::time_point{std::chrono::milliseconds{ms}};
+    };
+
+    data.source_create_time = read_time();
+    data.source_modify_time = read_time();
+    data.updated_at = read_time();
+
+    return Result<ResumeFileData>::success(std::move(data));
+}
+
+Result<void> ResumeFileWriter::write(const std::filesystem::path& path, const ResumeFileData& data) {
+    ResumeEngine engine(nullptr, path.parent_path());
+    return engine.createResumeFile(data.task_id, data);
+}
+
+}
