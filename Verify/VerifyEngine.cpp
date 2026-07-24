@@ -1,4 +1,5 @@
 #include "VerifyEngine.h"
+#include "Blake3Calculator.h"
 #include <fstream>
 #include <openssl/evp.h>
 
@@ -109,6 +110,14 @@ Result<IntegrityReport> VerifyEngine::generateReport(const std::string& task_id,
 }
 
 Result<std::string> VerifyEngine::computeFileHash(const std::filesystem::path& file_path) {
+    if (hash_algo_ == HashAlgorithm::BLAKE3) {
+        auto result = Blake3Calculator::computeFile(file_path);
+        if (result.empty()) {
+            return Result<std::string>::failure(ErrorCode::SourceError, "Cannot compute BLAKE3 hash");
+        }
+        return Result<std::string>::success(result);
+    }
+
     std::ifstream file(file_path, std::ios::binary);
     if (!file) {
         return Result<std::string>::failure(ErrorCode::SourceError, "Cannot open file for hashing");
@@ -125,6 +134,14 @@ Result<std::string> VerifyEngine::computeFileHash(const std::filesystem::path& f
     }
 
     return Result<std::string>::success(sha256.finalize());
+}
+
+void VerifyEngine::setHashAlgorithm(HashAlgorithm algo) {
+    hash_algo_ = algo;
+}
+
+HashAlgorithm VerifyEngine::getHashAlgorithm() const {
+    return hash_algo_;
 }
 
 }

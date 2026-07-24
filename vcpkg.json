@@ -8,6 +8,7 @@
         { "name": "curl" },
         { "name": "libssh2" },
         { "name": "zstd" },
-        { "name": "gtest" }
+        { "name": "gtest" },
+        { "name": "blake3" }
     ]
 }

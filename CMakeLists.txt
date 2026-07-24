@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(HunterTransfer VERSION 0.1.0 LANGUAGES CXX)
+project(HunterTransfer VERSION 0.1.0 LANGUAGES C CXX)
 
 set(HT_VERSION_PRERELEASE "alpha.2" CACHE STRING "Pre-release identifier" FORCE)
 
