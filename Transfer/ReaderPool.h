@@ -26,6 +26,8 @@ public:
     void start();
     void join();
 
+    ~ReaderPool() { join(); }
+
     ReaderPool(const ReaderPool&) = delete;
     ReaderPool& operator=(const ReaderPool&) = delete;
 

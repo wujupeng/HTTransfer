@@ -45,12 +45,19 @@ void ConcurrentQueue::signalWriterError() {
 
 void ConcurrentQueue::decrementActiveReaders() {
     uint32_t prev = active_readers_.fetch_sub(1);
+    if (prev == 0) {
+        active_readers_.store(0);
+        return;
+    }
     if (prev == 1) {
-        not_empty_.notify_all();
-        std::lock_guard lock(mutex_);
-        if (queue_.empty()) {
-            signalShutdown();
+        {
+            std::lock_guard lock(mutex_);
+            if (queue_.empty()) {
+                shutdown_.store(true);
+            }
         }
+        not_empty_.notify_all();
+        not_full_.notify_all();
     }
 }
 

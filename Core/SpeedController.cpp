@@ -51,17 +51,21 @@ Result<bool> SpeedController::tryConsume(uint64_t bytes) {
 Result<void> SpeedController::waitForTokens(uint64_t bytes) {
     if (speed_limit_mbps_ == 0) return Result<void>::success();
 
-    while (true) {
+    uint64_t remaining = bytes;
+    while (remaining > 0) {
         {
             std::lock_guard lock(mutex_);
             refillTokens();
-            if (tokens_ >= bytes) {
-                tokens_ -= bytes;
-                return Result<void>::success();
+            uint64_t consume = std::min(remaining, bucket_capacity_);
+            if (tokens_ >= consume) {
+                tokens_ -= consume;
+                remaining -= consume;
+                if (remaining == 0) return Result<void>::success();
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+    return Result<void>::success();
 }
 
 void SpeedController::onBandwidthChange(uint64_t available_bandwidth) {

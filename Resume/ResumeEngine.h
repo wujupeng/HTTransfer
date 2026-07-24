@@ -52,6 +52,7 @@ public:
 private:
     std::filesystem::path getResumePath(const std::string& task_id) const;
     bool atomicWrite(const std::filesystem::path& target_path, const std::vector<uint8_t>& data);
+    Result<void> writeResumeFileToDisk(const std::string& task_id, const ResumeFileData& data);
 
     std::shared_ptr<ILogger> logger_;
     std::filesystem::path resume_dir_;

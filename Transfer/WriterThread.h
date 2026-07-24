@@ -45,6 +45,8 @@ public:
     bool hasError() const { return error_occurred_.load(); }
     uint64_t totalTransferred() const { return total_transferred_.load(); }
 
+    ~WriterThread() { join(); }
+
     WriterThread(const WriterThread&) = delete;
     WriterThread& operator=(const WriterThread&) = delete;
 

@@ -35,11 +35,20 @@ Result<size_t> LocalFileSource::Read(offset_t offset, void* buffer, size_t size)
     LARGE_INTEGER li;
     li.QuadPart = static_cast<LONGLONG>(offset);
     SetFilePointerEx(handle_, li, nullptr, FILE_BEGIN);
-    DWORD bytes_read = 0;
-    if (!ReadFile(handle_, buffer, static_cast<DWORD>(size), &bytes_read, nullptr)) {
-        return Result<size_t>::failure(ErrorCode::IOError, "ReadFile failed");
+
+    size_t total_read = 0;
+    char* ptr = static_cast<char*>(buffer);
+    while (total_read < size) {
+        size_t remaining = size - total_read;
+        DWORD to_read = static_cast<DWORD>(std::min(remaining, static_cast<size_t>(0x80000000u)));
+        DWORD bytes_read = 0;
+        if (!ReadFile(handle_, ptr + total_read, to_read, &bytes_read, nullptr)) {
+            return Result<size_t>::failure(ErrorCode::IOError, "ReadFile failed");
+        }
+        if (bytes_read == 0) break;
+        total_read += bytes_read;
     }
-    return Result<size_t>::success(static_cast<size_t>(bytes_read));
+    return Result<size_t>::success(total_read);
 #else
     return Result<size_t>::failure(ErrorCode::IOError, "Not implemented");
 #endif

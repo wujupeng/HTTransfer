@@ -220,9 +220,9 @@ Result<void> TransferEngine::startTransferSingleThread(const TransferTask& task,
         if (!chunk_ok) {
             if (logger_) logger_->log(ILogger::Level::Error, task.task_id,
                 std::format("Chunk {} failed after {} retries", chunk.chunk_index, kMaxChunkRetries));
+        } else {
+            total_transferred += chunk.size;
         }
-
-        total_transferred += chunk.size;
 
         if (progress_callback_) {
             auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -251,13 +251,13 @@ Result<void> TransferEngine::startTransferReaderWriter(const TransferTask& task,
                                                         std::shared_ptr<TaskControl> ctrl) {
     validateMagic();
 
-    uint32_t reader_count = isSMB(task.target_path) ? 1 : parallelism_;
+    uint32_t reader_count = isSMB(task.source_path) ? 1 : parallelism_;
     reader_count = std::min(reader_count, static_cast<uint32_t>(manifest.chunks.size()));
     if (reader_count == 0) reader_count = 1;
 
     if (logger_) logger_->log(ILogger::Level::Info, task.task_id,
         std::format("startTransferReaderWriter: reader_count={}, isSMB={}",
-            reader_count, isSMB(task.target_path)));
+            reader_count, isSMB(task.source_path)));
 
     ConcurrentQueue queue(reader_count * 4);
     queue.setActiveReaders(reader_count);

@@ -26,6 +26,8 @@ public:
 
     Result<void> execute(const std::string& sql);
     Result<std::vector<std::vector<std::string>>> query(const std::string& sql);
+    Result<void> executePrepared(const std::string& sql, const std::vector<std::string>& params);
+    Result<std::vector<std::vector<std::string>>> queryPrepared(const std::string& sql, const std::vector<std::string>& params);
 
     sqlite3* handle() const { return db_; }
 

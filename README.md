@@ -1,30 +1,33 @@
-# HunterTransfer
+# HTTransfer
 
 **High-Performance Local File Copy Engine for Windows**
 
 A world-class local file replication engine designed for stability, speed, and reliability — positioned as a modern C++ alternative to FastCopy / TeraCopy / Robocopy (GUI edition).
 
-> **Current Version**: v0.1.0-alpha.2  
-> **Status**: Alpha (Active Development)  
-> **Branch**: `pure-cpp` — Pure C++ implementation, no managed runtime dependencies
+> **Current Version**: v0.1.0-alpha.3.1  
+> **Status**: Alpha (Bug Fix Sprint)  
+> **Branch**: `master` — Pure C++20 implementation, no managed runtime dependencies
 
 ---
 
 ## Features
 
 ### Core Capabilities
-- **Multi-threaded Parallel Transfer** — Atomic chunk distribution across N worker threads with independent file handles
-- **Large File Support** — Stable copying of TB-scale files using 16MB chunked I/O
-- **Data Integrity Verification** — SHA-256 hash verification (source vs target) with configurable presets
-- **Crash Recovery** — Resume files (`.htresume`) enable task continuation after unexpected termination
+- **Multi-threaded Parallel Transfer** — ReaderPool (N parallel readers) → ConcurrentQueue → WriterThread (single writer) pipeline architecture
+- **Large File Support** — Stable copying of TB-scale files using 16MB chunked I/O with loop-based Read/Write (handles >4GB per call)
+- **Data Integrity Verification** — BLAKE3 / SHA-256 / CRC32 hash verification with configurable algorithm selection
+- **Crash Recovery** — Resume files (`.htresume`) with batched disk writes enable task continuation after unexpected termination
+- **Speed Control** — Token-bucket rate limiting integrated into WriterThread
+- **SMB Detection** — Automatic single-thread fallback for SMB/UNC source paths
 - **UTF-8 Path Support** — Full Chinese/CJK path handling via `utf8ToPath()` / `pathToUtf8()` conversion layer
 
 ### GUI Features
 - **Qt6 Native Interface** — Clean, responsive Windows GUI
 - **Real-time Progress** — Transfer percentage, speed (MB/s), estimated remaining time
-- **Language Switching** — English / 中文 (Chinese) on-the-fly via combo box
+- **Language Switching** — English / 中文 (Chinese) via Help > Language menu
 - **About Dialog** — Version info accessible from Help menu
 - **File & Directory Selection** — Separate browse buttons for files and folders
+- **Application Icon** — Desktop/taskbar/exe icon
 
 ### CLI Features
 - **Version Flag** — `HunterTransfer.exe --version` or `-v` prints version and exits
@@ -34,38 +37,44 @@ A world-class local file replication engine designed for stability, speed, and r
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│                    GUI (Qt6)                     │
-│              MainWindow / AboutDialog            │
-├─────────────────────────────────────────────────┤
-│                  TaskManager                     │
-│    State Machine · Progress · Scheduling         │
-├──────────┬──────────┬───────────┬───────────────┤
-│FileEngine│VerifyEng │ResumeEng  │TransferEngine │
-│  Scan    │ SHA-256  │ .htresume │  Multi-thread │
-│  Prealloc│  Report  │  Crash    │  Chunk I/O    │
-│  Stability│         │  Recovery │  Retry Ctrl   │
-├──────────┴──────────┴───────────┴───────────────┤
-│           IDataSource / IDataSink               │
-│         LocalFileSource / LocalFileSink          │
-│         (CreateFileW / ReadFile / WriteFile)     │
-├─────────────────────────────────────────────────┤
-│              Core Infrastructure                 │
-│   BufferPool · SpeedController · IOCDispatcher   │
-│   Logger (SQLite + Daily File Rotation)          │
-│   ConfigManager · PresetRepository               │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                       GUI (Qt6)                           │
+│               MainWindow / AboutDialog                    │
+├──────────────────────────────────────────────────────────┤
+│                     TaskManager                           │
+│      State Machine · Progress · Scheduling · Presets      │
+├──────────┬──────────┬───────────┬────────────────────────┤
+│FileEngine│VerifyEng │ResumeEng  │    TransferEngine       │
+│  Scan    │ BLAKE3   │ .htresume │  ┌──────────────────┐  │
+│  Prealloc│ SHA-256  │  Batched  │  │  ReaderPool (N)  │  │
+│  Stability│ CRC32   │  Crash    │  │       ↓          │  │
+│  Resolve │  Report  │  Recovery │  │ ConcurrentQueue  │  │
+│          │          │           │  │       ↓          │  │
+│          │          │           │  │ WriterThread (1) │  │
+│          │          │           │  └──────────────────┘  │
+├──────────┴──────────┴───────────┴────────────────────────┤
+│           IDataSource / IDataSink                         │
+│         LocalFileSource / LocalFileSink                    │
+│    (CreateFileW / ReadFile / WriteFile with loop I/O)     │
+├──────────────────────────────────────────────────────────┤
+│               Core Infrastructure                         │
+│   BufferPool · SpeedController (Token Bucket)             │
+│   Logger (SQLite Prepared Statements + Daily Rotation)    │
+│   ConfigManager · PresetRepository                        │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### Key Design Decisions
 
 | Decision | Rationale |
 |----------|-----------|
+| ReaderPool → Queue → WriterThread pipeline | Eliminates multi-writer SMB instability; single file handle for target |
 | `IDataSource` / `IDataSink` abstraction | Decouples transfer logic from data source/sink specifics |
 | `utf8ToPath()` / `pathToUtf8()` | Avoids `std::filesystem::path(string)` ANSI codepage traps on Windows |
-| `CreateFileW` with `FILE_SHARE_READ \| FILE_SHARE_WRITE` | Enables multi-worker concurrent access to same file |
-| CMake `configure_file()` for version | Single source of truth — version defined once in `CMakeLists.txt` |
-| Per-worker independent file handles | Eliminates mutex contention on `SetFilePointerEx` + `ReadFile`/`WriteFile` |
+| Loop-based Read/Write (max 2GB per Win32 call) | Handles DWORD truncation and partial writes for >4GB chunks |
+| SQLite Prepared Statements | Prevents SQL injection in audit logging |
+| RAII join in ReaderPool/WriterThread destructors | Prevents `std::terminate` on exception during thread lifecycle |
+| Token-bucket speed control with batched consumption | Handles chunk sizes exceeding bucket capacity without infinite loop |
 
 ---
 
@@ -79,7 +88,7 @@ HunterTransfer/
 │   └── CMakeLists.txt
 ├── Core/                   # Core business logic
 │   ├── Common/
-│   │   ├── Types.h         # offset_t, utf8ToPath()
+│   │   ├── Types.h         # offset_t, utf8ToPath(), pathToUtf8()
 │   │   ├── Constants.h     # Chunk size, parallelism, timeouts
 │   │   ├── Result.h        # Result<T> error handling
 │   │   ├── ErrorCodes.h    # HT-E001 ~ HT-E999
@@ -93,29 +102,34 @@ HunterTransfer/
 │   ├── TaskManager.h/cpp   # Central orchestrator
 │   ├── FileEngine.h/cpp    # File operations, scanning, preallocation
 │   ├── BufferPool.h/cpp    # Pre-allocated memory pool
-│   ├── SpeedController.h/cpp
-│   ├── LocalFileSource.h/cpp  # IDataSource → CreateFileW
-│   ├── LocalFileSink.h/cpp    # IDataSink → CreateFileW
+│   ├── SpeedController.h/cpp # Token-bucket rate limiter
+│   ├── LocalFileSource.h/cpp  # IDataSource → CreateFileW (loop Read)
+│   ├── LocalFileSink.h/cpp    # IDataSink → CreateFileW (loop Write)
 │   ├── IDataSource.h       # Read(offset, buffer, size) interface
 │   ├── IDataSink.h         # Write(offset, buffer, size) interface
 │   └── IOCDispatcher.h     # IOCP dispatcher (future)
 ├── Transfer/               # Transfer engine
-│   ├── TransferEngine.h/cpp# Multi-thread transfer orchestration
+│   ├── TransferEngine.h/cpp# Reader→Queue→Writer orchestration
+│   ├── DataChunk.h         # Chunk data structure with move semantics
+│   ├── ConcurrentQueue.h/cpp # Thread-safe bounded blocking queue
+│   ├── ReaderPool.h/cpp    # N parallel reader threads
+│   ├── WriterThread.h/cpp  # Single writer thread with RAII join
 │   ├── RetryController.h/cpp
 │   ├── WorkerPool.h/cpp    # Generic thread pool
 │   └── Adapters/           # SMB, HTTP, FTP (stubs)
 ├── Verify/                 # Integrity verification
-│   ├── VerifyEngine.h/cpp  # SHA-256 file hashing
-│   ├── CRC32Calculator.h/cpp
-│   └── SHA256Calculator.h/cpp
+│   ├── VerifyEngine.h/cpp  # Multi-algorithm file hashing
+│   ├── Blake3Calculator.h/cpp # BLAKE3 hash
+│   ├── CRC32Calculator.h   # CRC32 (header-only)
+│   └── SHA256Calculator.h  # SHA-256 (header-only)
 ├── Resume/                 # Crash recovery
-│   ├── ResumeEngine.h/cpp  # .htresume create/load/invalidate
+│   ├── ResumeEngine.h/cpp  # .htresume create/load/invalidate (batched)
 │   ├── ResumeFileParser.h/cpp
 │   └── ResumeFileWriter.h/cpp
 ├── Logger/                 # Audit logging
 │   ├── ILogger.h           # Log interface
-│   ├── Logger.h/cpp        # SQLite + daily file rotation
-│   └── SQLiteDB.h/cpp      # SQLite wrapper
+│   ├── Logger.h/cpp        # SQLite (prepared stmts) + daily file rotation
+│   └── SQLiteDB.h/cpp      # SQLite wrapper with parameterized queries
 ├── Config/                 # Configuration
 │   ├── ConfigManager.h/cpp
 │   ├── PresetRepository.h/cpp
@@ -124,15 +138,20 @@ HunterTransfer/
 │   ├── MainWindow.h        # Main window (inline implementation)
 │   ├── AboutDialog.h       # About dialog with version info
 │   └── CMakeLists.txt      # moc generation
+├── Resources/              # Application resources
+│   ├── app.ico             # Windows exe icon (multi-size)
+│   ├── app.png             # Qt window icon
+│   ├── app.rc              # Windows resource file
+│   └── resources.qrc       # Qt resource file
 ├── Tests/                  # Unit tests (Google Test)
-│   ├── CoreTests/
-│   ├── TransferTests/
-│   ├── VerifyTests/
-│   └── ResumeTests/
+│   ├── CoreTests/          # 12 tests
+│   ├── TransferTests/      # 26 tests
+│   ├── VerifyTests/        # 13 tests
+│   └── ResumeTests/        # 7 tests
 ├── cmake/
 │   └── version.h.in        # CMake template → generated/version.h
 ├── CMakeLists.txt          # Root build configuration
-└── vcpkg.json              # Dependency manifest
+└── vcpkg.json              # Dependency manifest (blake3, openssl, sqlite3, etc.)
 ```
 
 ---
@@ -152,7 +171,6 @@ HunterTransfer/
 ### 1. Install Qt6
 
 ```powershell
-# Using aqtinstall (recommended)
 pip install aqtinstall
 aqt install-qt windows desktop 6.8.2 msvc2022_64 -O C:\Qt6
 ```
@@ -163,7 +181,7 @@ aqt install-qt windows desktop 6.8.2 msvc2022_64 -O C:\Qt6
 git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
 cd C:\vcpkg
 bootstrap-vcpkg.bat
-vcpkg install openssl:x64-windows sqlite3:x64-windows curl:x64-windows libssh2:x64-windows zstd:x64-windows gtest:x64-windows
+vcpkg install openssl:x64-windows sqlite3:x64-windows blake3:x64-windows curl:x64-windows libssh2:x64-windows zstd:x64-windows gtest:x64-windows
 ```
 
 ### 3. Configure & Build
@@ -189,7 +207,6 @@ ninja -C build-release
 
 # Print version
 .\build-release\App\HunterTransfer.exe --version
-# Output: HunterTransfer v0.1.0-alpha.2
 ```
 
 ---
@@ -204,9 +221,9 @@ ninja -C build-release
    - **Multi-thread** — Enable parallel transfer (default: ON, 4 threads)
    - **Overwrite** — Replace existing target files
    - **Resume** — Enable crash recovery via .htresume files
-   - **Verify** — SHA-256 integrity check after transfer
-   - **Speed Limit** — Throttle transfer speed
-   - **Threads** — Number of parallel workers (1-8)
+   - **Verify** — BLAKE3/SHA-256 integrity check after transfer
+   - **Speed Limit** — Throttle transfer speed (token-bucket)
+   - **Threads** — Number of parallel readers (1-8)
 4. **Click Start** — Monitor progress in real-time
 5. **Pause/Resume/Stop** — Control transfer at any time
 
@@ -229,56 +246,54 @@ MAJOR.MINOR.PATCH[-PRERELEASE]
 ```
 
 - Defined in `CMakeLists.txt`: `project(HunterTransfer VERSION 0.1.0)`
-- Pre-release identifier: `set(HT_VERSION_PRERELEASE "alpha.2")`
+- Pre-release identifier: `set(HT_VERSION_PRERELEASE "alpha.3.1")`
 - Auto-generated `version.h` via `configure_file()`
 - Accessed in code via `VersionInfo::version_string` / `VersionInfo::version_full`
-
-### Version Visibility
-
-| Location | Format | Example |
-|----------|--------|---------|
-| Window Title | `Hunter Transfer {version}` | `Hunter Transfer 0.1.0-alpha.2` |
-| First Log Line | `HunterTransfer started - HunterTransfer v{version}` | `HunterTransfer started - HunterTransfer v0.1.0-alpha.2` |
-| About Dialog | Full version + copyright | `Version: 0.1.0-alpha.2` |
-| CLI `--version` | Full identifier | `HunterTransfer v0.1.0-alpha.2` |
 
 ### Alpha Roadmap
 
 | Phase | Focus | Status |
 |-------|-------|--------|
 | Alpha-1 | GUI + Basic local copy | ✅ Complete |
-| Alpha-2 | Multi-thread + Async I/O | 🔄 In Progress |
-| Alpha-3 | Resume (SQLite persistence) | 📋 Planned |
-| Alpha-4 | BLAKE3 + SHA-256 verification | 📋 Planned |
-| Alpha-5 | Task management & logging | 📋 Planned |
+| Alpha-2 | Multi-thread + Async I/O | ✅ Complete |
+| Alpha-3R | CopyEngine refactor (Reader→Queue→Writer) | ✅ Complete |
+| Alpha-3 | Resume (batched disk writes) | ✅ Complete |
+| Alpha-4 | BLAKE3 + SHA-256 + CRC32 verification | ✅ Complete |
+| Alpha-5 | Speed control + Task management + Logging | ✅ Complete |
+| Alpha-3.1 | Bug Fix Sprint (P0×6 + P1×8) | ✅ Complete |
+| **Beta** | **Stability testing + Performance benchmarks** | 📋 Planned |
 
 ---
 
 ## Technical Details
 
-### Multi-threaded Transfer Flow
+### Transfer Pipeline
 
 ```
-startTransfer()
-├── parallelism_ > 1 → startTransferMultiThread()
-│   ├── preallocateFile() creates target with CREATE_ALWAYS
-│   ├── N worker threads, each opens independent file handles
-│   ├── Atomic counter next_chunk_index distributes work
-│   ├── Per-worker 4MB buffer → sub-chunk I/O loop
-│   └── progress_callback_ updates TaskManager (mutex-protected)
-└── parallelism_ == 1 → startTransferSingleThread()
-    └── Sequential chunk Read → Write
+startTransferReaderWriter()
+├── isSMB(source_path) → reader_count = 1 (single-thread for SMB)
+├── ConcurrentQueue (bounded, capacity = reader_count × 4)
+├── ReaderPool (N threads)
+│   ├── Each opens independent LocalFileSource handle
+│   ├── Atomic next_chunk_index distributes work
+│   ├── Loop Read (max 2GB per ReadFile call)
+│   ├── On failure: signalWriterError() → stops Writer
+│   └── RAII join on destruction
+├── WriterThread (1 thread)
+│   ├── Single LocalFileSink handle (single target file handle)
+│   ├── Loop Write (max 2GB per WriteFile call)
+│   ├── SpeedController waitForTokens (batched consumption)
+│   ├── markChunkCompleted → ResumeEngine (batched every 4 chunks)
+│   └── RAII join on destruction
+└── Progress callback → TaskManager (mutex-protected)
 ```
 
 ### UTF-8 Path Handling (Windows)
 
-Windows `std::filesystem::path(string)` uses the system ANSI code page (GBK on Chinese Windows), which corrupts CJK characters. HunterTransfer uses a dedicated conversion layer:
+Windows `std::filesystem::path(string)` uses the system ANSI code page (GBK on Chinese Windows), which corrupts CJK characters. HTTransfer uses a dedicated conversion layer:
 
 ```cpp
-// UTF-8 std::string → std::filesystem::path (via wchar_t)
 std::filesystem::path utf8ToPath(const std::string& utf8_str);
-
-// std::filesystem::path → UTF-8 std::string (via wchar_t)
 std::string pathToUtf8(const std::filesystem::path& p);
 ```
 
@@ -295,13 +310,40 @@ All operations return `Result<T>` with structured error codes:
 | HT-E003 | Target | Target file creation failed |
 | HT-E004 | Storage | Insufficient disk space |
 | HT-E005 | Verify | Integrity check failed |
+| HT-E006 | Verify | SHA-256 hash mismatch |
+| HT-E007 | Transfer | File failed in directory transfer |
 | HT-E999 | System | Unhandled exception |
 
 ### Retry Strategy
 
-- Each chunk gets up to **3 retry attempts**
-- Exponential backoff: 50ms × (retry + 1)
-- Failed chunks are counted but don't abort the entire transfer
+- Each chunk gets up to **3 retry attempts** (configurable via `kMaxChunkRetries`)
+- Exponential backoff: 100ms × (retry + 1)
+- Failed chunks propagate error via `signalWriterError()` → Writer stops
+
+### Code Quality Rules (PM-enforced)
+
+| Rule | Description |
+|------|-------------|
+| No bare `new`/`delete` | Use `unique_ptr`/`shared_ptr` |
+| No bare `std::thread` | Use RAII join wrappers |
+| No SQL string concatenation | Use Prepared Statements |
+| No `DWORD` for file sizes | Use `uint64_t`/`size_t` |
+| All I/O must check return values | Loop Read/Write until complete |
+| All chunks: Read→Hash→Write→Verify | Full data integrity pipeline |
+
+---
+
+## Testing
+
+```powershell
+# Run all tests
+.\build-release\Tests\TransferTests\ht_transfer_tests.exe
+.\build-release\Tests\ResumeTests\ht_resume_tests.exe
+.\build-release\Tests\VerifyTests\ht_verify_tests.exe
+.\build-release\Tests\CoreTests\ht_core_tests.exe
+```
+
+**58 tests total** — Transfer 26 + Resume 7 + Verify 13 + Core 12
 
 ---
 
@@ -311,49 +353,12 @@ All operations return `Result<T>` with structured error codes:
 |---------|---------|---------|
 | **Qt6** | 6.8.2 | GUI framework (Core, Widgets) |
 | **OpenSSL** | 3.x | SHA-256 hash computation |
-| **SQLite3** | 3.x | Audit log storage |
+| **BLAKE3** | 1.8.x | BLAKE3 hash computation |
+| **SQLite3** | 3.x | Audit log storage (WAL mode) |
 | **zstd** | 1.5.x | Compression (future) |
 | **Google Test** | 1.17.x | Unit testing |
 | **libcurl** | 8.x | HTTP transfers (future) |
 | **libssh2** | 1.11.x | SSH/SFTP transfers (future) |
-
----
-
-## Configuration
-
-### CMake Compile Definitions
-
-| Definition | Default | Description |
-|------------|---------|-------------|
-| `HT_CHUNK_SIZE` | 16777216 (16MB) | Size of each transfer chunk |
-| `HT_BUFFER_POOL_SIZE` | 67108864 (64MB) | Pre-allocated buffer pool |
-| `HT_MAX_PARALLELISM` | 8 | Maximum worker threads |
-| `HT_DEFAULT_PARALLELISM` | 4 | Default worker threads |
-
-### Runtime Configuration
-
-- **Language**: Stored in `QSettings("HunterTransfer", "HunterTransfer")` under key `language`
-- **Log Files**: Daily rotation to `{YYYY-MM-DD}.log` in working directory
-- **Audit Database**: `ht_audit.db` (SQLite WAL mode)
-
----
-
-## Testing
-
-```powershell
-# Build tests
-cmake --build build-release --target ht_tests
-
-# Run tests
-cd build-release
-ctest --output-on-failure
-```
-
-Test modules:
-- `CoreTests` — BufferPool, Domain types, Result, Types
-- `TransferTests` — TransferEngine, RetryController
-- `VerifyTests` — VerifyEngine, CRC32, SHA-256
-- `ResumeTests` — ResumeEngine, file format
 
 ---
 
@@ -368,6 +373,7 @@ Private project. All rights reserved.
 Built with:
 - [Qt6](https://www.qt.io/) — Cross-platform UI framework
 - [OpenSSL](https://www.openssl.org/) — Cryptographic library
+- [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) — Fast cryptographic hash
 - [SQLite](https://www.sqlite.org/) — Embedded database engine
 - [vcpkg](https://vcpkg.io/) — C++ package manager
 - [Google Test](https://github.com/google/googletest) — Testing framework

@@ -181,7 +181,11 @@ void TaskManager::executeTaskInner(const std::string& task_id) {
         return;
     }
 
-    if (logger_) logger_->log(ILogger::Level::Info, task_id, "executeTaskInner: skipping setParallelism (using default)");
+    transfer_engine_->setParallelism(task.parallelism);
+
+    if (task.speed_limit > 0 && speed_controller_) {
+        speed_controller_->setSpeedLimit(task.speed_limit);
+    }
 
     if (logger_) logger_->log(ILogger::Level::Info, task_id, "executeTaskInner: proceeding to Step 1");
     {
@@ -285,6 +289,8 @@ void TaskManager::executeTaskInner(const std::string& task_id) {
         std::error_code dir_ec;
         std::filesystem::create_directories(dir_target, dir_ec);
 
+        bool any_file_failed = false;
+
         for (const auto& entry : entries) {
             if (shutting_down_) return;
 
@@ -302,6 +308,7 @@ void TaskManager::executeTaskInner(const std::string& task_id) {
                 if (logger_) {
                     logger_->log(ILogger::Level::Error, task_id, "Failed to create manifest");
                 }
+                any_file_failed = true;
                 continue;
             }
 
@@ -325,10 +332,22 @@ void TaskManager::executeTaskInner(const std::string& task_id) {
                     logger_->log(ILogger::Level::Error, task_id,
                         std::string("Transfer failed: ") + transfer_result.errorMessage());
                 }
+                any_file_failed = true;
             } else {
                 if (logger_) logger_->log(ILogger::Level::Info, task_id,
                     std::string("File transferred: ") + pathToUtf8(entry.relative_path));
             }
+        }
+
+        if (any_file_failed) {
+            std::lock_guard lock(mutex_);
+            auto it = active_tasks_.find(task_id);
+            if (it != active_tasks_.end()) {
+                transitionState(it->second, TaskStatus::Failed);
+                it->second.error_code = "HT-E007";
+                it->second.error_message = "One or more files failed during directory transfer";
+            }
+            return;
         }
     } else {
         if (logger_) logger_->log(ILogger::Level::Info, task_id, "Step 3a: Creating chunk manifest");

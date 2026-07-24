@@ -35,7 +35,13 @@ std::filesystem::path ResumeEngine::getResumePath(const std::string& task_id) co
 }
 
 Result<void> ResumeEngine::createResumeFile(const std::string& task_id, const ResumeFileData& data) {
+    std::lock_guard lock(mutex_);
     cache_[task_id] = data;
+    return writeResumeFileToDisk(task_id, data);
+}
+
+Result<void> ResumeEngine::writeResumeFileToDisk(const std::string& task_id, const ResumeFileData& data) {
+
     auto path = getResumePath(task_id);
 
     std::ofstream file(path, std::ios::binary);
@@ -114,7 +120,7 @@ Result<std::optional<ResumeFileData>> ResumeEngine::loadResumeFile(const std::st
 Result<void> ResumeEngine::updateResumeFile(const std::string& task_id, const ResumeFileData& data) {
     std::lock_guard lock(mutex_);
     cache_[task_id] = data;
-    return createResumeFile(task_id, data);
+    return writeResumeFileToDisk(task_id, data);
 }
 
 Result<void> ResumeEngine::markChunkCompleted(const std::string& task_id, uint64_t chunk_index, uint64_t offset) {
@@ -134,7 +140,7 @@ Result<void> ResumeEngine::markChunkCompleted(const std::string& task_id, uint64
 
     pending_writes_++;
     if (pending_writes_ >= kFlushInterval) {
-        auto result = createResumeFile(task_id, data);
+        auto result = writeResumeFileToDisk(task_id, data);
         pending_writes_ = 0;
         return result;
     }
@@ -147,7 +153,7 @@ Result<void> ResumeEngine::flushPendingWrites() {
     if (pending_writes_ == 0) return Result<void>::success();
 
     for (auto& [task_id, data] : cache_) {
-        auto result = createResumeFile(task_id, data);
+        auto result = writeResumeFileToDisk(task_id, data);
         if (result.isErr()) return result;
     }
     pending_writes_ = 0;

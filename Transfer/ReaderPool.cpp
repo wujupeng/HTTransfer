@@ -81,6 +81,8 @@ void ReaderPool::readerLoop(uint32_t reader_id) {
             if (!chunk_ok && !queue_.isWriterError() && !ctrl_->cancelled.load()) {
                 if (logger_) logger_->log(ILogger::Level::Error, "SYSTEM",
                     std::format("Reader {} chunk {} failed after {} retries", reader_id, idx, kMaxChunkRetries));
+                queue_.signalWriterError();
+                break;
             }
         }
 

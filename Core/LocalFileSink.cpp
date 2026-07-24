@@ -6,7 +6,7 @@ namespace ht {
 
 LocalFileSink::~LocalFileSink() { Close(); }
 
-Result<void> LocalFileSink::Open(const std::string& path, uint64_t preallocate_size) {
+Result<void> LocalFileSink::Open(const std::string& path, uint64_t preallocate_size, bool resume) {
     path_ = path;
     std::error_code ec;
     auto fs_path = utf8ToPath(path);
@@ -17,10 +17,11 @@ Result<void> LocalFileSink::Open(const std::string& path, uint64_t preallocate_s
 
 #ifdef _WIN32
     bool file_exists = std::filesystem::exists(fs_path, ec) && !ec;
+    DWORD creation_disposition = (resume && file_exists) ? OPEN_EXISTING : CREATE_ALWAYS;
 
     handle_ = CreateFileW(fs_path.wstring().c_str(),
         GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
-        nullptr, file_exists ? OPEN_EXISTING : CREATE_ALWAYS,
+        nullptr, creation_disposition,
         FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle_ == INVALID_HANDLE_VALUE) {
         return Result<void>::failure(ErrorCode::TargetError, "Cannot create target file for writing");
@@ -48,11 +49,22 @@ Result<size_t> LocalFileSink::Write(offset_t offset, const void* buffer, size_t 
     LARGE_INTEGER li;
     li.QuadPart = static_cast<LONGLONG>(offset);
     SetFilePointerEx(handle_, li, nullptr, FILE_BEGIN);
-    DWORD bytes_written = 0;
-    if (!WriteFile(handle_, buffer, static_cast<DWORD>(size), &bytes_written, nullptr)) {
-        return Result<size_t>::failure(ErrorCode::IOError, "WriteFile failed");
+
+    size_t total_written = 0;
+    const char* ptr = static_cast<const char*>(buffer);
+    while (total_written < size) {
+        size_t remaining = size - total_written;
+        DWORD to_write = static_cast<DWORD>(std::min(remaining, static_cast<size_t>(0x80000000u)));
+        DWORD bytes_written = 0;
+        if (!WriteFile(handle_, ptr + total_written, to_write, &bytes_written, nullptr)) {
+            return Result<size_t>::failure(ErrorCode::IOError, "WriteFile failed");
+        }
+        if (bytes_written == 0) {
+            return Result<size_t>::failure(ErrorCode::IOError, "WriteFile wrote zero bytes");
+        }
+        total_written += bytes_written;
     }
-    return Result<size_t>::success(static_cast<size_t>(bytes_written));
+    return Result<size_t>::success(total_written);
 #else
     return Result<size_t>::failure(ErrorCode::IOError, "Not implemented");
 #endif

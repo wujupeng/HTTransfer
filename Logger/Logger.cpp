@@ -90,6 +90,48 @@ Result<std::vector<std::vector<std::string>>> SQLiteDB::query(const std::string&
     return Result<std::vector<std::vector<std::string>>>::success(std::move(rows));
 }
 
+Result<void> SQLiteDB::executePrepared(const std::string& sql, const std::vector<std::string>& params) {
+    if (!db_) return Result<void>::failure(ErrorCode::IOError, "Database not open");
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        return Result<void>::failure(ErrorCode::IOError, sqlite3_errmsg(db_));
+    }
+    for (int i = 0; i < static_cast<int>(params.size()); ++i) {
+        sqlite3_bind_text(stmt, i + 1, params[i].c_str(), -1, SQLITE_TRANSIENT);
+    }
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+        return Result<void>::failure(ErrorCode::IOError, sqlite3_errmsg(db_));
+    }
+    return Result<void>::success();
+}
+
+Result<std::vector<std::vector<std::string>>> SQLiteDB::queryPrepared(const std::string& sql, const std::vector<std::string>& params) {
+    if (!db_) return Result<std::vector<std::vector<std::string>>>::failure(ErrorCode::IOError, "Database not open");
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        return Result<std::vector<std::vector<std::string>>>::failure(ErrorCode::IOError, sqlite3_errmsg(db_));
+    }
+    for (int i = 0; i < static_cast<int>(params.size()); ++i) {
+        sqlite3_bind_text(stmt, i + 1, params[i].c_str(), -1, SQLITE_TRANSIENT);
+    }
+    std::vector<std::vector<std::string>> rows;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        int cols = sqlite3_column_count(stmt);
+        std::vector<std::string> row(cols);
+        for (int i = 0; i < cols; ++i) {
+            const char* val = reinterpret_cast<const char*>(sqlite3_column_text(stmt, i));
+            row[i] = val ? val : "";
+        }
+        rows.push_back(std::move(row));
+    }
+    sqlite3_finalize(stmt);
+    return Result<std::vector<std::vector<std::string>>>::success(std::move(rows));
+}
+
 Logger::Logger(const std::string& db_path) : db_path_(db_path) {
     auto r = db_.open(db_path);
     if (r.isOk()) initSchema();
@@ -125,25 +167,33 @@ void Logger::log(Level level, const std::string& task_id, const std::string& mes
 
 Result<void> Logger::writeAuditLog(const TransferAuditLog& audit) {
     std::lock_guard lock(write_mutex_);
-    auto r = db_.execute(std::format(
+    const char* sql =
         "INSERT INTO transfer_audit_log "
         "(task_id, source_path, target_path, username, start_hash, end_hash, "
         "result, speed_peak, speed_average, started_at, completed_at, failure_reason) "
-        "VALUES ('{}', '{}', '{}', '{}', '{}', '{}', '{}', {}, {}, '{}', '{}', '{}')",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+    std::string result_str = (audit.result == AuditResult::Success) ? "SUCCESS" : "FAILED";
+    std::string peak_str = std::to_string(audit.speed_peak);
+    std::string avg_str = std::to_string(audit.speed_average);
+    std::vector<std::string> params = {
         audit.task_id, audit.source_path, audit.target_path, audit.username,
-        audit.start_hash, audit.end_hash,
-        audit.result == AuditResult::Success ? "SUCCESS" : "FAILED",
-        audit.speed_peak, audit.speed_average, "", "", audit.failure_reason));
+        audit.start_hash, audit.end_hash, result_str,
+        peak_str, avg_str, "", "", audit.failure_reason
+    };
+    auto r = db_.executePrepared(sql, params);
     if (r.isErr()) { writeFallbackJson(audit); return r; }
     return Result<void>::success();
 }
 
 Result<std::vector<TransferAuditLog>> Logger::queryAuditLogs(const AuditLogQuery& query) {
     std::string sql = "SELECT * FROM transfer_audit_log WHERE 1=1";
-    if (!query.task_id.empty()) sql += std::format(" AND task_id='{}'", query.task_id);
-    if (!query.result.empty()) sql += std::format(" AND result='{}'", query.result);
-    sql += std::format(" ORDER BY log_id DESC LIMIT {} OFFSET {}", query.limit, query.offset);
-    auto r = db_.query(sql);
+    std::vector<std::string> params;
+    if (!query.task_id.empty()) { sql += " AND task_id=?"; params.push_back(query.task_id); }
+    if (!query.result.empty()) { sql += " AND result=?"; params.push_back(query.result); }
+    sql += " ORDER BY log_id DESC LIMIT ? OFFSET ?";
+    params.push_back(std::to_string(query.limit));
+    params.push_back(std::to_string(query.offset));
+    auto r = db_.queryPrepared(sql, params);
     if (r.isErr()) return Result<std::vector<TransferAuditLog>>::failure(r.errorCode(), r.errorMessage());
     std::vector<TransferAuditLog> logs;
     for (const auto& row : r.value()) {

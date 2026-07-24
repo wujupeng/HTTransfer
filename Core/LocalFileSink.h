@@ -18,7 +18,7 @@ public:
     LocalFileSink(const LocalFileSink&) = delete;
     LocalFileSink& operator=(const LocalFileSink&) = delete;
 
-    Result<void> Open(const std::string& path, uint64_t preallocate_size = 0) override;
+    Result<void> Open(const std::string& path, uint64_t preallocate_size = 0, bool resume = false) override;
     Result<size_t> Write(offset_t offset, const void* buffer, size_t size) override;
     void Close() override;
     Result<void> Flush() override;
