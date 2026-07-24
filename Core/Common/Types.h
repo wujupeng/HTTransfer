@@ -30,4 +30,18 @@ inline std::filesystem::path utf8ToPath(const std::string& utf8_str) {
 #endif
 }
 
+inline std::string pathToUtf8(const std::filesystem::path& p) {
+#ifdef _WIN32
+    auto wstr = p.wstring();
+    if (wstr.empty()) return "";
+    int len = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return "";
+    std::string result(len - 1, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, result.data(), len, nullptr, nullptr);
+    return result;
+#else
+    return p.string();
+#endif
+}
+
 }

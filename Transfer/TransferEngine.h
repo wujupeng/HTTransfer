@@ -133,6 +133,8 @@ public:
     void setProgressCallback(ProgressCallback callback) override;
     void setChunkCompletedCallback(ChunkCompletedCallback callback) override;
 
+    static bool isSMB(const std::string& path);
+
 private:
     Result<void> startTransferSingleThread(const TransferTask& task, const ChunkManifest& manifest,
                                             IDataSource* source, IDataSink* sink,
@@ -141,7 +143,7 @@ private:
                                             IDataSource* source, IDataSink* sink,
                                             std::shared_ptr<TaskControl> ctrl);
     std::shared_ptr<TaskControl> getTaskControl(const std::string& task_id);
-    static bool isSMB(const std::string& path);
+
     void validateMagic() const;
 
     std::shared_ptr<ILogger> logger_;
