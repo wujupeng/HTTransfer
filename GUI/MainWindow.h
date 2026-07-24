@@ -119,6 +119,7 @@ public:
         qApp->installTranslator(translator_);
 
         setWindowTitle(tr("Hunter Transfer") + QString(" %1").arg(VersionInfo::version_string));
+        setWindowIcon(QIcon(":/icons/app.png"));
         setMinimumSize(640, 480);
 
         auto* central = new QWidget(this);

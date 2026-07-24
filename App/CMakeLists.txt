@@ -4,6 +4,7 @@ if(WIN32)
     add_executable(HunterTransfer WIN32
         main.cpp
         Application.cpp
+        ${CMAKE_SOURCE_DIR}/Resources/app.rc
     )
 else()
     add_executable(HunterTransfer
@@ -11,6 +12,10 @@ else()
         Application.cpp
     )
 endif()
+
+set(QRC_FILE ${CMAKE_SOURCE_DIR}/Resources/resources.qrc)
+qt6_add_resources(QRC_OUTPUT ${QRC_FILE})
+target_sources(HunterTransfer PRIVATE ${QRC_OUTPUT})
 
 target_include_directories(HunterTransfer PRIVATE ${CMAKE_SOURCE_DIR})
 
