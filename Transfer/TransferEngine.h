@@ -13,6 +13,7 @@
 #include "Core/Common/Result.h"
 #include "Core/Common/Constants.h"
 #include "Core/Domain/TransferTask.h"
+#include "Core/SpeedController.h"
 #include "Core/Domain/ChunkManifest.h"
 #include "Core/BufferPool.h"
 #include "Core/IDataSource.h"
@@ -132,6 +133,7 @@ public:
     uint32_t getParallelism() const override;
     void setProgressCallback(ProgressCallback callback) override;
     void setChunkCompletedCallback(ChunkCompletedCallback callback) override;
+    void setSpeedController(std::shared_ptr<ISpeedController> controller);
 
     static bool isSMB(const std::string& path);
 
@@ -153,6 +155,7 @@ private:
     std::unique_ptr<WorkerPool> worker_pool_;
     ProgressCallback progress_callback_;
     ChunkCompletedCallback chunk_completed_callback_;
+    std::shared_ptr<ISpeedController> speed_controller_;
     uint32_t parallelism_ = kDefaultParallelism;
 
     std::mutex task_control_mutex_;

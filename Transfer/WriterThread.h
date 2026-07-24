@@ -16,6 +16,7 @@ namespace ht {
 
 struct TaskControl;
 class IResumeEngine;
+class ISpeedController;
 
 using ProgressCallback = std::function<void(const std::string& task_id,
                                              uint64_t transferred_bytes,
@@ -36,7 +37,8 @@ public:
                  std::shared_ptr<ILogger> logger,
                  std::shared_ptr<TaskControl> ctrl,
                  ProgressCallback progress_cb,
-                 ChunkCompletedCallback chunk_cb);
+                 ChunkCompletedCallback chunk_cb,
+                 std::shared_ptr<ISpeedController> speed_controller = nullptr);
 
     void start();
     void join();
@@ -60,6 +62,7 @@ private:
     std::shared_ptr<TaskControl> ctrl_;
     ProgressCallback progress_callback_;
     ChunkCompletedCallback chunk_completed_callback_;
+    std::shared_ptr<ISpeedController> speed_controller_;
 
     std::atomic<uint64_t> total_transferred_{0};
     std::atomic<bool> error_occurred_{false};

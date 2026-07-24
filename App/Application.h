@@ -35,6 +35,7 @@ public:
 
         auto file_engine = std::make_shared<FileEngine>(buffer_pool, iocp, verify_engine);
         auto speed_controller = std::make_shared<SpeedController>();
+        transfer_engine->setSpeedController(speed_controller);
         auto config_manager = std::make_shared<ConfigManager>();
 
         auto task_manager = std::make_shared<TaskManager>(

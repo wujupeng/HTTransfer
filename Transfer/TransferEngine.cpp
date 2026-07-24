@@ -1,6 +1,7 @@
 #include "TransferEngine.h"
 #include "Core/LocalFileSource.h"
 #include "Core/LocalFileSink.h"
+#include "Core/SpeedController.h"
 #include "Core/Common/Types.h"
 #include "Logger/ILogger.h"
 #include "Transfer/ReaderPool.h"
@@ -271,7 +272,7 @@ Result<void> TransferEngine::startTransferReaderWriter(const TransferTask& task,
 
     WriterThread writer_thread(&local_sink, queue, resume_engine_,
         task.task_id, task.total_bytes, logger_, ctrl,
-        progress_callback_, chunk_completed_callback_);
+        progress_callback_, chunk_completed_callback_, speed_controller_);
 
     reader_pool.start();
     writer_thread.start();
@@ -316,6 +317,10 @@ void TransferEngine::setParallelism(uint32_t count) {
 }
 
 uint32_t TransferEngine::getParallelism() const { return parallelism_; }
+
+void TransferEngine::setSpeedController(std::shared_ptr<ISpeedController> controller) {
+    speed_controller_ = std::move(controller);
+}
 
 void TransferEngine::setProgressCallback(ProgressCallback callback) {
     progress_callback_ = std::move(callback);

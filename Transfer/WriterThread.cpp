@@ -1,5 +1,6 @@
 #include "WriterThread.h"
 #include "Core/Common/Constants.h"
+#include "Core/SpeedController.h"
 #include "Resume/ResumeEngine.h"
 #include "Transfer/TransferEngine.h"
 
@@ -13,7 +14,8 @@ WriterThread::WriterThread(IDataSink* sink,
                            std::shared_ptr<ILogger> logger,
                            std::shared_ptr<TaskControl> ctrl,
                            ProgressCallback progress_cb,
-                           ChunkCompletedCallback chunk_cb)
+                           ChunkCompletedCallback chunk_cb,
+                           std::shared_ptr<ISpeedController> speed_controller)
     : sink_(sink),
       queue_(queue),
       resume_engine_(std::move(resume_engine)),
@@ -22,7 +24,8 @@ WriterThread::WriterThread(IDataSink* sink,
       logger_(std::move(logger)),
       ctrl_(std::move(ctrl)),
       progress_callback_(std::move(progress_cb)),
-      chunk_completed_callback_(std::move(chunk_cb)) {}
+      chunk_completed_callback_(std::move(chunk_cb)),
+      speed_controller_(std::move(speed_controller)) {}
 
 void WriterThread::start() {
     start_time_ = std::chrono::steady_clock::now();
@@ -85,6 +88,10 @@ void WriterThread::writerLoop() {
 }
 
 bool WriterThread::writeChunk(DataChunk& chunk) {
+    if (speed_controller_) {
+        speed_controller_->waitForTokens(chunk.size);
+    }
+
     for (uint32_t retry = 0; retry < kMaxChunkRetries; ++retry) {
         if (ctrl_->cancelled.load()) return false;
 
