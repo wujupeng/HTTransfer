@@ -132,7 +132,26 @@ Result<void> ResumeEngine::markChunkCompleted(const std::string& task_id, uint64
     data.current_offset = offset;
     data.updated_at = std::chrono::system_clock::now();
 
-    return createResumeFile(task_id, data);
+    pending_writes_++;
+    if (pending_writes_ >= kFlushInterval) {
+        auto result = createResumeFile(task_id, data);
+        pending_writes_ = 0;
+        return result;
+    }
+
+    return Result<void>::success();
+}
+
+Result<void> ResumeEngine::flushPendingWrites() {
+    std::lock_guard lock(mutex_);
+    if (pending_writes_ == 0) return Result<void>::success();
+
+    for (auto& [task_id, data] : cache_) {
+        auto result = createResumeFile(task_id, data);
+        if (result.isErr()) return result;
+    }
+    pending_writes_ = 0;
+    return Result<void>::success();
 }
 
 bool ResumeEngine::atomicWrite(const std::filesystem::path& target_path, const std::vector<uint8_t>& data) {

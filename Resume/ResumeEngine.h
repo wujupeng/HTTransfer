@@ -22,6 +22,7 @@ public:
     virtual Result<bool> isSourceFileChanged(const std::string& task_id, const std::filesystem::path& source_path) = 0;
     virtual Result<void> invalidateResumeFile(const std::string& task_id) = 0;
     virtual Result<std::vector<std::string>> scanUnfinishedTasks() = 0;
+    virtual Result<void> flushPendingWrites() = 0;
 };
 
 class ResumeFileParser {
@@ -46,6 +47,7 @@ public:
     Result<bool> isSourceFileChanged(const std::string& task_id, const std::filesystem::path& source_path) override;
     Result<void> invalidateResumeFile(const std::string& task_id) override;
     Result<std::vector<std::string>> scanUnfinishedTasks() override;
+    Result<void> flushPendingWrites() override;
 
 private:
     std::filesystem::path getResumePath(const std::string& task_id) const;
@@ -55,6 +57,8 @@ private:
     std::filesystem::path resume_dir_;
     std::unordered_map<std::string, ResumeFileData> cache_;
     std::mutex mutex_;
+    uint64_t pending_writes_ = 0;
+    static constexpr uint64_t kFlushInterval = 4;
 };
 
 }

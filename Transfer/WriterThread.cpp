@@ -66,6 +66,12 @@ void WriterThread::writerLoop() {
 
             updateProgress(chunk.size);
         }
+
+        try {
+            if (resume_engine_) {
+                resume_engine_->flushPendingWrites();
+            }
+        } catch (...) {}
     } catch (const std::exception& e) {
         if (logger_) logger_->log(ILogger::Level::Critical, task_id_,
             std::format("Writer exception: {}", e.what()));
