@@ -39,7 +39,7 @@ public:
         translations_.clear();
         if (lang == "zh") {
             translations_ = {
-                {"Hunter Transfer", "Hunter Transfer"},
+                {"HTTransfer", "HTTransfer"},
                 {"Source", "源路径"},
                 {"Target", "目标路径"},
                 {"Options", "选项"},
@@ -111,44 +111,20 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(std::shared_ptr<ITaskManager> task_manager, QWidget* parent = nullptr)
         : QMainWindow(parent), task_manager_(std::move(task_manager)) {
-        QSettings settings("HunterTransfer", "HunterTransfer");
+        QSettings settings("HTTransfer", "HTTransfer");
         QString saved_lang = settings.value("language", "en").toString();
 
         translator_ = new HtTranslator(this);
         translator_->setLanguage(saved_lang);
         qApp->installTranslator(translator_);
 
-        setWindowTitle(tr("Hunter Transfer") + QString(" %1").arg(VersionInfo::version_string));
+        setWindowTitle(tr("HTTransfer") + QString(" %1").arg(VersionInfo::version_string));
         setWindowIcon(QIcon(":/icons/app.png"));
         setMinimumSize(640, 480);
 
         auto* central = new QWidget(this);
         setCentralWidget(central);
         auto* main_layout = new QVBoxLayout(central);
-
-        auto* lang_widget = new QWidget(this);
-        auto* lang_layout = new QHBoxLayout(lang_widget);
-        lang_layout->setContentsMargins(10, 5, 10, 5);
-
-        lang_label_ = new QLabel(tr("Language"), this);
-        lang_label_->setStyleSheet("font-weight: bold; color: #333; font-size: 12px;");
-
-        lang_combo_ = new QComboBox(this);
-        lang_combo_->setMinimumWidth(120);
-        lang_combo_->addItem("English", "en");
-        lang_combo_->addItem("中文", "zh");
-        int idx = lang_combo_->findData(saved_lang);
-        if (idx >= 0) lang_combo_->setCurrentIndex(idx);
-        connect(lang_combo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                this, &MainWindow::onLanguageChanged);
-
-        lang_layout->addWidget(lang_label_);
-        lang_layout->addWidget(lang_combo_);
-        lang_layout->addStretch();
-
-        lang_widget->setStyleSheet("QWidget { background-color: #f0f0f0; border: 1px solid #ccc; border-radius: 5px; padding: 5px; }");
-        main_layout->addWidget(lang_widget);
-        main_layout->addSpacing(10);
 
         source_group_ = new QGroupBox(tr("Source"), this);
         auto* source_layout = new QHBoxLayout(source_group_);
@@ -234,6 +210,13 @@ public:
         main_layout->addWidget(progress_group_);
 
         auto* help_menu = menuBar()->addMenu(tr("Help"));
+
+        auto* lang_menu = help_menu->addMenu(tr("Language"));
+        auto* en_action = lang_menu->addAction("English");
+        auto* zh_action = lang_menu->addAction("中文");
+        connect(en_action, &QAction::triggered, this, [this]() { switchLanguage("en"); });
+        connect(zh_action, &QAction::triggered, this, [this]() { switchLanguage("zh"); });
+
         auto* about_action = help_menu->addAction(tr("About"));
         connect(about_action, &QAction::triggered, this, [this]() {
             AboutDialog dlg(this);
@@ -250,21 +233,19 @@ public:
 
 private slots:
 
-    void onLanguageChanged(int index) {
-        QString lang = lang_combo_->itemData(index).toString();
+    void switchLanguage(const QString& lang) {
         qApp->removeTranslator(translator_);
         translator_->setLanguage(lang);
         qApp->installTranslator(translator_);
 
-        QSettings settings("HunterTransfer", "HunterTransfer");
+        QSettings settings("HTTransfer", "HTTransfer");
         settings.setValue("language", lang);
 
         retranslateUi();
     }
 
     void retranslateUi() {
-        setWindowTitle(tr("Hunter Transfer") + QString(" %1").arg(VersionInfo::version_string));
-        lang_label_->setText(tr("Language"));
+        setWindowTitle(tr("HTTransfer") + QString(" %1").arg(VersionInfo::version_string));
         source_group_->setTitle(tr("Source"));
         target_group_->setTitle(tr("Target"));
         options_group_->setTitle(tr("Options"));
@@ -517,8 +498,7 @@ private:
     std::shared_ptr<ITaskManager> task_manager_;
     HtTranslator* translator_ = nullptr;
     std::string current_task_id_;
-    QComboBox* lang_combo_ = nullptr;
-    QLabel* lang_label_ = nullptr;
+
     QLineEdit* source_edit_ = nullptr;
     QLineEdit* target_edit_ = nullptr;
     QGroupBox* source_group_ = nullptr;
