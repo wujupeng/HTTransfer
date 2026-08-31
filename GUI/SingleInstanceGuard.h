@@ -33,7 +33,7 @@ public:
 
     bool tryAcquireLock() {
 #ifdef _WIN32
-        mutex_handle_ = CreateMutexW(nullptr, TRUE, L"Global\\HT-Local-SingleInstance");
+        mutex_handle_ = CreateMutexW(nullptr, TRUE, L"Local\\HT-Transfer-SingleInstance");
         if (GetLastError() == ERROR_ALREADY_EXISTS) {
             return false;
         }

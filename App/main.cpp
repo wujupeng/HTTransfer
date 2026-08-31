@@ -16,7 +16,6 @@ static bool checkVersionArg(int argc, char** argv) {
     return false;
 }
 
-
 #ifdef _WIN32
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (checkVersionArg(__argc, __argv)) return 0;

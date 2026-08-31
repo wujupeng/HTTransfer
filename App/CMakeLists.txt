@@ -47,3 +47,18 @@ add_custom_command(
     COMMENT "Running moc on AboutDialog.h"
 )
 target_sources(HTTransfer PRIVATE ${MOC_OUT_APP} ${MOC_OUT_ABOUT})
+
+if(WIN32)
+    get_target_property(QT_WINDEPLOYQT_EXECUTABLE Qt6::windeployqt LOCATION)
+    add_custom_command(TARGET HTTransfer POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E echo "Running windeployqt..."
+        COMMAND ${QT_WINDEPLOYQT_EXECUTABLE}
+            --release
+            --no-translations
+            --no-system-d3d-compiler
+            --no-opengl-sw
+            --compiler-runtime
+            $<TARGET_FILE:HTTransfer>
+        COMMENT "Deploying Qt runtime dependencies"
+    )
+endif()
