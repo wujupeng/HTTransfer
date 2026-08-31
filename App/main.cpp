@@ -1,5 +1,7 @@
 #include "Application.h"
 #include "Core/Common/VersionInfo.h"
+#include "GUI/SingleInstanceGuard.h"
+#include <QApplication>
 #include <iostream>
 #include <string_view>
 
@@ -14,16 +16,36 @@ static bool checkVersionArg(int argc, char** argv) {
     return false;
 }
 
+
 #ifdef _WIN32
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     if (checkVersionArg(__argc, __argv)) return 0;
-    ht::Application app(__argc, __argv);
+
+    int argc = __argc;
+    char** argv = __argv;
+
+    ht::SingleInstanceGuard guard;
+    if (!guard.tryAcquireLock()) {
+        guard.notifyExistingInstance();
+        return 0;
+    }
+
+    ht::Application app(argc, argv);
+    app.setSingleInstanceGuard(&guard);
     return app.run();
 }
 #else
 int main(int argc, char** argv) {
     if (checkVersionArg(argc, argv)) return 0;
+
+    ht::SingleInstanceGuard guard;
+    if (!guard.tryAcquireLock()) {
+        guard.notifyExistingInstance();
+        return 0;
+    }
+
     ht::Application app(argc, argv);
+    app.setSingleInstanceGuard(&guard);
     return app.run();
 }
 #endif

@@ -1,4 +1,4 @@
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
 
 add_library(ht_gui STATIC
     MainWindow.cpp
@@ -14,7 +14,7 @@ target_include_directories(ht_gui PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(ht_gui PUBLIC ht_core ht_watch Qt6::Core Qt6::Widgets)
+target_link_libraries(ht_gui PUBLIC ht_core ht_watch Qt6::Core Qt6::Widgets Qt6::Network)
 
 if(MSVC)
     target_compile_options(ht_gui PRIVATE /Zc:__cplusplus)
@@ -26,6 +26,7 @@ set(MOC_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/MainWindow.h
     ${CMAKE_CURRENT_SOURCE_DIR}/WatchConfigDialog.h
     ${CMAKE_CURRENT_SOURCE_DIR}/SystemTrayManager.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/SingleInstanceGuard.h
     ${CMAKE_CURRENT_SOURCE_DIR}/TaskPanel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ProgressView.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ConfigDialog.h

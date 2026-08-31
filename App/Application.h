@@ -15,6 +15,7 @@
 #include "Config/ConfigManager.h"
 #include "Watch/WatchSession.h"
 #include "GUI/MainWindow.h"
+#include "GUI/SingleInstanceGuard.h"
 
 namespace ht {
 
@@ -58,14 +59,30 @@ public:
         main_window_ = std::make_unique<MainWindow>(task_manager, watch_session, minimized_);
     }
 
+    void setSingleInstanceGuard(SingleInstanceGuard* guard) {
+        single_instance_guard_ = guard;
+        guard->startListening();
+        QObject::connect(guard, &SingleInstanceGuard::restoreForegroundRequested,
+                         [this]() { restoreForeground(); });
+    }
+
     int run() {
         if (!minimized_) main_window_->show();
         return qt_app_.exec();
     }
 
 private:
+    void restoreForeground() {
+        if (!main_window_) return;
+        main_window_->show();
+        main_window_->raise();
+        main_window_->activateWindow();
+        main_window_->setWindowState((main_window_->windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+    }
+
     QApplication qt_app_;
     std::unique_ptr<MainWindow> main_window_;
+    SingleInstanceGuard* single_instance_guard_ = nullptr;
     bool minimized_ = false;
 };
 

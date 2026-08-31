@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 project(HunterTransfer VERSION 0.1.0 LANGUAGES C CXX)
 
-set(HT_VERSION_PRERELEASE "alpha.7" CACHE STRING "Pre-release identifier" FORCE)
+set(HT_VERSION_PRERELEASE "alpha.8" CACHE STRING "Pre-release identifier" FORCE)
 
 if(HT_VERSION_PRERELEASE)
     set(HT_VERSION_STRING "${PROJECT_VERSION}-${HT_VERSION_PRERELEASE}")
@@ -59,7 +59,7 @@ else()
     add_compile_options(-Wall -Wextra)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
 find_package(OpenSSL REQUIRED)
 find_package(SQLite3 REQUIRED)
 find_package(CURL REQUIRED)

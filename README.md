@@ -2,12 +2,12 @@
 
 **High-Performance Local File Copy Engine for Windows**
 
-> **Version**: v0.1.0-alpha.7  
+> **Version**: v0.1.0-alpha.8  
 > **Language**: C++20 + Qt6  
 > **Platform**: Windows 10/11/Server  
 > **License**: Private
 
-HTTransfer 是一款世界级的本地文件复制引擎，定位类似 FastCopy / TeraCopy / Robocopy（GUI 版）。核心能力：超大文件(TB级)稳定复制、多线程高性能、自动断点续传、数据完整性校验、定时增量备份、系统托盘后台运行。
+HTTransfer 是一款世界级的本地文件复制引擎，定位类似 FastCopy / TeraCopy / Robocopy（GUI 版）。核心能力：超大文件(TB级)稳定复制、多线程高性能、自动断点续传、数据完整性校验、定时增量备份、系统托盘后台运行、多目录选择、单实例运行。
 
 ---
 
@@ -36,11 +36,19 @@ HTTransfer 是一款世界级的本地文件复制引擎，定位类似 FastCopy
 - **开机自启动** — "随系统启动"复选框，通过注册表实现
 - **配置持久化** — 自动保存/恢复源路径、目标路径、传输选项等配置
 
+### 多目录选择与单实例运行 (Alpha-8)
+- **多源目录选择** — QListWidget 列表管理多个源路径，支持添加/删除/清除
+- **多文件选择** — 文件浏览器支持一次选择多个文件(getOpenFileNames)
+- **多目录选择** — 目录浏览器支持非原生对话框多选(ShowDirsOnly + DontUseNativeDialog)
+- **批量任务创建** — 多源路径时自动为每个源创建独立任务，以 basename 保持相对路径结构
+- **单实例运行** — CreateMutex 全局互斥锁 + QLocalServer/QLocalSocket 进程间通信
+- **恢复前台** — 二次启动时通知已运行实例恢复到前台(show + raise + activateWindow)
+
 ### GUI 功能
 - **Qt6 原生界面** — 简洁响应式 Windows GUI
 - **实时进度** — 传输百分比、速度(MB/s)、剩余时间
 - **语言切换** — English / 中文，Help > Language 菜单
-- **文件/目录选择** — 独立的文件和目录浏览按钮
+- **多目录选择** — QListWidget 列表 + 添加目录/添加文件/删除/清除按钮
 - **应用图标** — 桌面/任务栏/exe 图标
 
 ---
@@ -53,7 +61,8 @@ HTTransfer 是一款世界级的本地文件复制引擎，定位类似 FastCopy
 ┌──────────────────────────────────────────────────────────────┐
 │                        GUI (Qt6)                              │
 │            MainWindow / WatchConfigDialog /                   │
-│            SystemTrayManager / AboutDialog                    │
+│            SystemTrayManager / SingleInstanceGuard /          │
+│            AboutDialog                                        │
 ├──────────────────────────────────────────────────────────────┤
 │                       TaskManager                             │
 │         State Machine · Progress · Scheduling                 │
@@ -232,8 +241,9 @@ HTTransfer/
 │   ├── AppConfigManager.h      # QSettings 持久化
 │   └── AutoStartManager.h      # 注册表自启动
 ├── GUI/                        # Qt6 界面
-│   ├── MainWindow.h            # 主窗口
+│   ├── MainWindow.h            # 主窗口(多目录QListWidget)
 │   ├── SystemTrayManager.h     # 系统托盘
+│   ├── SingleInstanceGuard.h   # 单实例运行(CreateMutex+QLocalServer)
 │   ├── WatchConfigDialog.h     # 增量备份配置
 │   └── AboutDialog.h           # 关于对话框
 ├── Resources/                  # 应用资源
@@ -306,12 +316,13 @@ ninja -C build-release
 
 ### 基本文件复制
 
-1. **选择源路径** — 点击"文件"选择单文件，或"目录"选择文件夹
-2. **选择目标路径** — 点击"..."浏览目标目录
-3. **配置选项**：
+1. **选择源路径** — 点击"Add Dir"添加目录，"Add File"添加文件，支持多个
+2. **管理源路径列表** — 选中项后"Remove"删除，"Clear"清空全部
+3. **选择目标路径** — 点击"..."浏览目标目录
+4. **配置选项**：
    - 多线程 | 覆盖 | 断点续传 | 校验 | 限速 | 线程数
-4. **点击开始** — 实时监控进度
-5. **暂停/继续/停止** — 随时控制传输
+5. **点击开始** — 为每个源路径创建独立任务，实时监控进度
+6. **暂停/继续/停止** — 随时控制传输
 
 ### 定时增量备份
 
@@ -371,6 +382,7 @@ ninja -C build-release
 | Alpha-3.1 | Bug Fix Sprint (P0×6 + P1×8) | ✅ 完成 |
 | Alpha-6 | 定时增量备份 | ✅ 完成 |
 | Alpha-7 | 系统托盘 + 开机自启动 | ✅ 完成 |
+| Alpha-8 | 多目录选择 + 单实例运行 | ✅ 完成 |
 | **Beta** | **稳定性测试 + 性能基准** | 📋 计划中 |
 
 ---
@@ -393,7 +405,7 @@ ninja -C build-release
 | 库 | 版本 | 用途 |
 |----|------|------|
 | C++20 | MSVC 14.44 | 编程语言 |
-| Qt6 | 6.8.2 | GUI 框架 (Core, Widgets) |
+| Qt6 | 6.8.2 | GUI 框架 (Core, Widgets, Network) |
 | OpenSSL | 3.x | SHA-256 哈希 |
 | BLAKE3 | 1.8.x | BLAKE3 哈希 |
 | SQLite3 | 3.x | 审计日志 (WAL 模式) |

@@ -15,6 +15,7 @@
 #include <QTimer>
 #include <QTranslator>
 #include <QComboBox>
+#include <QListWidget>
 #include <QSettings>
 #include <QApplication>
 #include <QEvent>
@@ -138,19 +139,34 @@ public:
         setCentralWidget(central);
         auto* main_layout = new QVBoxLayout(central);
 
-        source_group_ = new QGroupBox(tr("Source"), this);
-        auto* source_layout = new QHBoxLayout(source_group_);
-        source_edit_ = new QLineEdit(this);
-        source_edit_->setPlaceholderText("D:\\ERPBackup\\data.bak or D:\\ERPBackup\\");
-        auto* source_file_btn = new QPushButton(tr("File"), this);
-        auto* source_dir_btn = new QPushButton(tr("Directory"), this);
-        source_file_btn->setFixedWidth(60);
-        source_dir_btn->setFixedWidth(70);
-        connect(source_file_btn, &QPushButton::clicked, this, &MainWindow::browseSourceFile);
-        connect(source_dir_btn, &QPushButton::clicked, this, &MainWindow::browseSourceDir);
-        source_layout->addWidget(source_edit_);
-        source_layout->addWidget(source_file_btn);
-        source_layout->addWidget(source_dir_btn);
+        source_group_ = new QGroupBox(tr("Source Directories"), this);
+        auto* source_layout = new QVBoxLayout(source_group_);
+        source_list_ = new QListWidget(this);
+        source_list_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+        source_list_->setMaximumHeight(100);
+        auto* source_btn_layout = new QHBoxLayout();
+        auto* add_dir_btn = new QPushButton(tr("Add Dir"), this);
+        auto* add_file_btn = new QPushButton(tr("Add File"), this);
+        auto* remove_btn = new QPushButton(tr("Remove"), this);
+        auto* clear_btn = new QPushButton(tr("Clear"), this);
+        add_dir_btn->setFixedWidth(70);
+        add_file_btn->setFixedWidth(70);
+        remove_btn->setFixedWidth(70);
+        clear_btn->setFixedWidth(60);
+        connect(add_dir_btn, &QPushButton::clicked, this, &MainWindow::browseSourceDir);
+        connect(add_file_btn, &QPushButton::clicked, this, &MainWindow::browseSourceFile);
+        connect(remove_btn, &QPushButton::clicked, this, [this]() {
+            auto selected = source_list_->selectedItems();
+            for (auto* item : selected) delete item;
+        });
+        connect(clear_btn, &QPushButton::clicked, this, [this]() { source_list_->clear(); });
+        source_btn_layout->addWidget(add_dir_btn);
+        source_btn_layout->addWidget(add_file_btn);
+        source_btn_layout->addWidget(remove_btn);
+        source_btn_layout->addWidget(clear_btn);
+        source_btn_layout->addStretch();
+        source_layout->addWidget(source_list_);
+        source_layout->addLayout(source_btn_layout);
         main_layout->addWidget(source_group_);
 
         target_group_ = new QGroupBox(tr("Target"), this);
@@ -375,7 +391,7 @@ private slots:
 
     void retranslateUi() {
         setWindowTitle(tr("HTTransfer") + QString(" %1").arg(VersionInfo::version_string));
-        source_group_->setTitle(tr("Source"));
+        source_group_->setTitle(tr("Source Directories"));
         target_group_->setTitle(tr("Target"));
         options_group_->setTitle(tr("Options"));
         progress_group_->setTitle(tr("Progress"));
@@ -394,28 +410,28 @@ private slots:
         QString filters = "All Files (*.*);;Backup Files (*.bak *.bkf);;Archive Files (*.zip *.rar *.7z *.tar *.gz);;Disk Images (*.iso *.vhd *.vhdx)";
         QString initialDir = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
 
-        QString path = QFileDialog::getOpenFileName(
+        QStringList paths = QFileDialog::getOpenFileNames(
             this,
             tr("Select Source File"),
             initialDir,
             filters
         );
 
-        if (!path.isEmpty()) {
-            source_edit_->setText(path);
+        for (const auto& path : paths) {
+            if (!path.isEmpty()) source_list_->addItem(path);
         }
     }
 
     void browseSourceDir() {
         QString initialDir = QStandardPaths::writableLocation(QStandardPaths::DesktopLocation);
-        QString path = QFileDialog::getExistingDirectory(
-            this,
-            tr("Select Source Directory"),
-            initialDir
-        );
-
-        if (!path.isEmpty()) {
-            source_edit_->setText(path);
+        QFileDialog dlg(this, tr("Select Source Directories"), initialDir);
+        dlg.setFileMode(QFileDialog::Directory);
+        dlg.setOption(QFileDialog::ShowDirsOnly, true);
+        dlg.setOption(QFileDialog::DontUseNativeDialog, true);
+        if (dlg.exec() == QDialog::Accepted) {
+            for (const auto& path : dlg.selectedFiles()) {
+                if (!path.isEmpty()) source_list_->addItem(path);
+            }
         }
     }
 
@@ -425,9 +441,8 @@ private slots:
     }
 
     void onStart() {
-        auto source = source_edit_->text().toUtf8().toStdString();
         auto target = target_edit_->text().toUtf8().toStdString();
-        if (source.empty() || target.empty()) {
+        if (source_list_->count() == 0 || target.empty()) {
             QMessageBox::warning(this, tr("Error"), tr("Please specify source and target paths"));
             return;
         }
@@ -444,26 +459,27 @@ private slots:
         uint64_t speed_limit = speed_limit_cb_->isChecked()
             ? static_cast<uint64_t>(speed_spin_->value()) * 1024 * 1024 : 0;
 
-        qDebug() << "onStart: preset=" << static_cast<uint32_t>(preset)
-                 << "parallelism=" << parallelism
-                 << "speed_limit=" << speed_limit;
+        for (int i = 0; i < source_list_->count(); ++i) {
+            auto source = source_list_->item(i)->text().toUtf8().toStdString();
+            auto src_path = std::filesystem::path(source);
+            auto basename = src_path.filename().string();
+            auto final_target = target;
+            if (source_list_->count() > 1 && !basename.empty()) {
+                final_target = target + "/" + basename;
+            }
 
-        auto result = task_manager_->createTask(source, target, preset, parallelism, speed_limit);
-        if (result.isErr()) {
-            QMessageBox::critical(this, tr("Error"), QString::fromStdString(result.errorMessage()));
-            return;
+            auto result = task_manager_->createTask(source, final_target, preset, parallelism, speed_limit);
+            if (result.isErr()) {
+                QMessageBox::critical(this, tr("Error"), QString::fromStdString(result.errorMessage()));
+                continue;
+            }
+
+            current_task_id_ = result.value();
+            task_manager_->startTask(current_task_id_);
         }
 
-        current_task_id_ = result.value();
         updateButtonStates(TaskStatus::Queued);
         status_label_->setText(tr("Status: Starting..."));
-
-        auto start_result = task_manager_->startTask(current_task_id_);
-        if (start_result.isErr()) {
-            status_label_->setText(tr("Status: Failed") + " - " + QString::fromStdString(start_result.errorMessage()));
-            updateButtonStates(TaskStatus::Failed);
-            return;
-        }
 
         progress_timer_->start(500);
     }
@@ -628,7 +644,7 @@ private:
     HtTranslator* translator_ = nullptr;
     std::string current_task_id_;
 
-    QLineEdit* source_edit_ = nullptr;
+    QListWidget* source_list_ = nullptr;
     QLineEdit* target_edit_ = nullptr;
     QGroupBox* source_group_ = nullptr;
     QGroupBox* target_group_ = nullptr;
@@ -665,7 +681,7 @@ private:
     void saveCurrentConfig() {
         if (!config_manager_) return;
         AppConfig config;
-        config.source_path = source_edit_->text().toUtf8().toStdString();
+        config.source_path = source_list_->count() > 0 ? source_list_->item(0)->text().toUtf8().toStdString() : "";
         config.target_path = target_edit_->text().toUtf8().toStdString();
         config.multi_thread = multi_thread_cb_->isChecked();
         config.overwrite = overwrite_cb_->isChecked();
@@ -681,7 +697,7 @@ private:
     }
 
     void restoreConfig(const AppConfig& config) {
-        if (!config.source_path.empty()) source_edit_->setText(QString::fromUtf8(config.source_path.c_str()));
+        if (!config.source_path.empty()) source_list_->addItem(QString::fromUtf8(config.source_path.c_str()));
         if (!config.target_path.empty()) target_edit_->setText(QString::fromUtf8(config.target_path.c_str()));
         multi_thread_cb_->setChecked(config.multi_thread);
         overwrite_cb_->setChecked(config.overwrite);
