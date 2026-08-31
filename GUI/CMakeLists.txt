@@ -14,7 +14,7 @@ target_include_directories(ht_gui PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(ht_gui PUBLIC ht_core Qt6::Core Qt6::Widgets)
+target_link_libraries(ht_gui PUBLIC ht_core ht_watch Qt6::Core Qt6::Widgets)
 
 if(MSVC)
     target_compile_options(ht_gui PRIVATE /Zc:__cplusplus)
@@ -24,6 +24,8 @@ get_target_property(MOC_EXE Qt6::moc LOCATION)
 
 set(MOC_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/MainWindow.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/WatchConfigDialog.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/SystemTrayManager.h
     ${CMAKE_CURRENT_SOURCE_DIR}/TaskPanel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ProgressView.h
     ${CMAKE_CURRENT_SOURCE_DIR}/ConfigDialog.h

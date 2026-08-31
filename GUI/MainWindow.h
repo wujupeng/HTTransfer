@@ -24,9 +24,15 @@
 #include <format>
 #include <QMenuBar>
 #include <QAction>
+#include <QCloseEvent>
 #include "Core/TaskManager.h"
 #include "Core/Common/VersionInfo.h"
 #include "AboutDialog.h"
+#include "WatchConfigDialog.h"
+#include "Watch/IWatchSession.h"
+#include "SystemTrayManager.h"
+#include "Config/AppConfigManager.h"
+#include "Config/AutoStartManager.h"
 
 namespace ht {
 
@@ -109,10 +115,16 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit MainWindow(std::shared_ptr<ITaskManager> task_manager, QWidget* parent = nullptr)
-        : QMainWindow(parent), task_manager_(std::move(task_manager)) {
-        QSettings settings("HTTransfer", "HTTransfer");
-        QString saved_lang = settings.value("language", "en").toString();
+    explicit MainWindow(std::shared_ptr<ITaskManager> task_manager,
+                        std::shared_ptr<IWatchSession> watch_session = nullptr,
+                        bool minimized = false,
+                        QWidget* parent = nullptr)
+        : QMainWindow(parent), task_manager_(std::move(task_manager)),
+          watch_session_(std::move(watch_session)), minimized_start_(minimized) {
+        config_manager_ = std::make_unique<AppConfigManager>();
+        auto_start_manager_ = std::make_unique<AutoStartManager>();
+        auto config = config_manager_->load();
+        QString saved_lang = QString::fromUtf8(config.language.c_str());
 
         translator_ = new HtTranslator(this);
         translator_->setLanguage(saved_lang);
@@ -179,6 +191,20 @@ public:
         options_layout->addWidget(speed_spin_);
         options_layout->addWidget(new QLabel(tr("Threads:"), this));
         options_layout->addWidget(thread_spin_);
+        autostart_cb_ = new QCheckBox(tr("Auto Start"), this);
+        autostart_cb_->setChecked(auto_start_manager_->isEnabled());
+        options_layout->addWidget(autostart_cb_);
+        connect(autostart_cb_, &QCheckBox::toggled, this, [this](bool checked) {
+            if (checked) {
+                auto r = auto_start_manager_->enable();
+                if (r.isErr()) {
+                    autostart_cb_->setChecked(false);
+                    QMessageBox::warning(this, tr("Error"), QString::fromStdString(r.errorMessage()));
+                }
+            } else {
+                auto_start_manager_->disable();
+            }
+        });
         main_layout->addWidget(options_group_);
 
         auto* button_layout = new QHBoxLayout();
@@ -194,6 +220,12 @@ public:
         button_layout->addWidget(pause_btn_);
         button_layout->addWidget(resume_btn_);
         button_layout->addWidget(stop_btn_);
+
+        watch_btn_ = new QPushButton(tr("Incremental Backup"), this);
+        watch_btn_->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }");
+        connect(watch_btn_, &QPushButton::clicked, this, &MainWindow::onWatchButtonClicked);
+        button_layout->addWidget(watch_btn_);
+
         main_layout->addLayout(button_layout);
 
         progress_group_ = new QGroupBox(tr("Progress"), this);
@@ -208,6 +240,10 @@ public:
         progress_layout->addWidget(speed_label_);
         progress_layout->addWidget(remaining_label_);
         main_layout->addWidget(progress_group_);
+
+        watch_status_label_ = new QLabel("", this);
+        watch_status_label_->setStyleSheet("QLabel { color: #666; font-size: 11px; }");
+        main_layout->addWidget(watch_status_label_);
 
         auto* help_menu = menuBar()->addMenu(tr("Help"));
 
@@ -228,10 +264,103 @@ public:
         progress_timer_ = new QTimer(this);
         connect(progress_timer_, &QTimer::timeout, this, &MainWindow::updateProgress);
 
+        if (watch_session_) {
+            watch_session_->registerStatusCallback(
+                [this](WatchStatus status, const WatchStatistics& stats) {
+                    QMetaObject::invokeMethod(this, [this, status]() {
+                        updateWatchButtonStates(status);
+                    }, Qt::QueuedConnection);
+                });
+        }
+
+        watch_status_timer_ = new QTimer(this);
+        connect(watch_status_timer_, &QTimer::timeout, this, &MainWindow::updateWatchStatistics);
+        watch_status_timer_->start(500);
+
+        tray_manager_ = new SystemTrayManager(this, this);
+        if (tray_manager_->isAvailable()) {
+            tray_manager_->show();
+            connect(tray_manager_, &SystemTrayManager::quitRequested, this, [this]() {
+                saveCurrentConfig();
+                QApplication::quit();
+            });
+        }
+
+        restoreConfig(config);
+
+        if (minimized_start_ && tray_manager_ && tray_manager_->isAvailable()) {
+            this->hide();
+        } else {
+            this->show();
+        }
+
         QTimer::singleShot(100, this, &MainWindow::checkRecoverableTasks);
     }
 
+protected:
+    void closeEvent(QCloseEvent* event) override {
+        if (tray_manager_ && tray_manager_->isAvailable()) {
+            this->hide();
+            tray_manager_->showMessage(tr("HTTransfer"), tr("Running in background. Right-click tray icon to exit."));
+            event->ignore();
+        } else {
+            saveCurrentConfig();
+            event->accept();
+        }
+    }
+
 private slots:
+
+    void onWatchButtonClicked() {
+        if (!watch_session_) return;
+
+        auto status = watch_session_->getStatus();
+        if (status == WatchStatus::Running) {
+            watch_session_->stopWatch();
+            return;
+        }
+
+        auto* dlg = new WatchConfigDialog(this);
+        connect(dlg, &WatchConfigDialog::startWatchRequested, this,
+            [this](const QString& source, const QString& target, int interval) {
+                auto result = watch_session_->startWatch(
+                    source.toUtf8().toStdString(),
+                    target.toUtf8().toStdString(),
+                    interval);
+                if (result.isErr()) {
+                    QMessageBox::critical(this, tr("Error"),
+                        QString::fromStdString(result.errorMessage()));
+                }
+            });
+        dlg->exec();
+        delete dlg;
+    }
+
+    void updateWatchButtonStates(WatchStatus status) {
+        if (status == WatchStatus::Running) {
+            watch_btn_->setText(tr("Stop Backup"));
+            watch_btn_->setStyleSheet("QPushButton { background-color: #f44336; color: white; font-weight: bold; }");
+        } else {
+            watch_btn_->setText(tr("Incremental Backup"));
+            watch_btn_->setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }");
+        }
+    }
+
+    void updateWatchStatistics() {
+        if (!watch_session_) return;
+        auto stats = watch_session_->getStatistics();
+        if (stats.status == WatchStatus::Running) {
+            watch_status_label_->setText(
+                tr("Monitoring: interval %1s | detected: %2 | backed up: %3")
+                    .arg(stats.scan_interval)
+                    .arg(stats.total_detected)
+                    .arg(stats.total_backed_up));
+        } else if (stats.status == WatchStatus::Error) {
+            watch_status_label_->setText(tr("Monitor error - click to restart"));
+        } else {
+            watch_status_label_->setText("");
+        }
+    }
 
     void switchLanguage(const QString& lang) {
         qApp->removeTranslator(translator_);
@@ -521,6 +650,47 @@ private:
     QLabel* speed_label_ = nullptr;
     QLabel* remaining_label_ = nullptr;
     QTimer* progress_timer_ = nullptr;
+
+    std::shared_ptr<IWatchSession> watch_session_;
+    QPushButton* watch_btn_ = nullptr;
+    QLabel* watch_status_label_ = nullptr;
+    QTimer* watch_status_timer_ = nullptr;
+
+    std::unique_ptr<AppConfigManager> config_manager_;
+    std::unique_ptr<AutoStartManager> auto_start_manager_;
+    SystemTrayManager* tray_manager_ = nullptr;
+    QCheckBox* autostart_cb_ = nullptr;
+    bool minimized_start_ = false;
+
+    void saveCurrentConfig() {
+        if (!config_manager_) return;
+        AppConfig config;
+        config.source_path = source_edit_->text().toUtf8().toStdString();
+        config.target_path = target_edit_->text().toUtf8().toStdString();
+        config.multi_thread = multi_thread_cb_->isChecked();
+        config.overwrite = overwrite_cb_->isChecked();
+        config.resume = resume_cb_->isChecked();
+        config.verify = verify_cb_->isChecked();
+        config.speed_limit = speed_limit_cb_->isChecked();
+        config.speed_limit_value = speed_spin_->value();
+        config.thread_count = thread_spin_->value();
+        config.auto_start = autostart_cb_->isChecked();
+        if (translator_) config.language = translator_->currentLanguage().toUtf8().toStdString();
+        config.minimized_start = minimized_start_;
+        config_manager_->save(config);
+    }
+
+    void restoreConfig(const AppConfig& config) {
+        if (!config.source_path.empty()) source_edit_->setText(QString::fromUtf8(config.source_path.c_str()));
+        if (!config.target_path.empty()) target_edit_->setText(QString::fromUtf8(config.target_path.c_str()));
+        multi_thread_cb_->setChecked(config.multi_thread);
+        overwrite_cb_->setChecked(config.overwrite);
+        resume_cb_->setChecked(config.resume);
+        verify_cb_->setChecked(config.verify);
+        speed_limit_cb_->setChecked(config.speed_limit);
+        speed_spin_->setValue(config.speed_limit_value);
+        thread_spin_->setValue(config.thread_count);
+    }
 };
 
 }

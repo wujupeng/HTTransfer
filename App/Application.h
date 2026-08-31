@@ -13,6 +13,7 @@
 #include "Transfer/TransferEngine.h"
 #include "Logger/Logger.h"
 #include "Config/ConfigManager.h"
+#include "Watch/WatchSession.h"
 #include "GUI/MainWindow.h"
 
 namespace ht {
@@ -21,6 +22,11 @@ class Application {
 public:
     Application(int& argc, char** argv)
         : qt_app_(argc, argv) {
+        for (int i = 1; i < argc; ++i) {
+            std::string_view arg(argv[i]);
+            if (arg == "--minimized") minimized_ = true;
+        }
+
         auto buffer_pool = std::make_shared<BufferPool>();
         auto iocp = std::make_shared<IOCDispatcher>();
         iocp->initialize(kDefaultParallelism);
@@ -44,20 +50,23 @@ public:
 
         task_manager->recoverFromCrash();
 
+        auto watch_session = std::make_shared<WatchSession>(task_manager, file_engine, logger);
+
         logger->log(ILogger::Level::Info, "SYSTEM",
             std::string("HunterTransfer started - ") + VersionInfo::version_full);
 
-        main_window_ = std::make_unique<MainWindow>(task_manager);
+        main_window_ = std::make_unique<MainWindow>(task_manager, watch_session, minimized_);
     }
 
     int run() {
-        main_window_->show();
+        if (!minimized_) main_window_->show();
         return qt_app_.exec();
     }
 
 private:
     QApplication qt_app_;
     std::unique_ptr<MainWindow> main_window_;
+    bool minimized_ = false;
 };
 
 }

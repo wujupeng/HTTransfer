@@ -1,13 +1,13 @@
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 
 if(WIN32)
-    add_executable(HunterTransfer WIN32
+    add_executable(HTTransfer WIN32
         main.cpp
         Application.cpp
         ${CMAKE_SOURCE_DIR}/Resources/app.rc
     )
 else()
-    add_executable(HunterTransfer
+    add_executable(HTTransfer
         main.cpp
         Application.cpp
     )
@@ -15,11 +15,11 @@ endif()
 
 set(QRC_FILE ${CMAKE_SOURCE_DIR}/Resources/resources.qrc)
 qt6_add_resources(QRC_OUTPUT ${QRC_FILE})
-target_sources(HunterTransfer PRIVATE ${QRC_OUTPUT})
+target_sources(HTTransfer PRIVATE ${QRC_OUTPUT})
 
-target_include_directories(HunterTransfer PRIVATE ${CMAKE_SOURCE_DIR})
+target_include_directories(HTTransfer PRIVATE ${CMAKE_SOURCE_DIR})
 
-target_link_libraries(HunterTransfer PRIVATE
+target_link_libraries(HTTransfer PRIVATE
     ht_core
     ht_transfer
     ht_resume
@@ -46,4 +46,4 @@ add_custom_command(
     DEPENDS ${CMAKE_SOURCE_DIR}/GUI/AboutDialog.h
     COMMENT "Running moc on AboutDialog.h"
 )
-target_sources(HunterTransfer PRIVATE ${MOC_OUT_APP} ${MOC_OUT_ABOUT})
+target_sources(HTTransfer PRIVATE ${MOC_OUT_APP} ${MOC_OUT_ABOUT})

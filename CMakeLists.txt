@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 project(HunterTransfer VERSION 0.1.0 LANGUAGES C CXX)
 
-set(HT_VERSION_PRERELEASE "alpha.2" CACHE STRING "Pre-release identifier" FORCE)
+set(HT_VERSION_PRERELEASE "alpha.7" CACHE STRING "Pre-release identifier" FORCE)
 
 if(HT_VERSION_PRERELEASE)
     set(HT_VERSION_STRING "${PROJECT_VERSION}-${HT_VERSION_PRERELEASE}")
@@ -72,6 +72,7 @@ add_subdirectory(Resume)
 add_subdirectory(Verify)
 add_subdirectory(Logger)
 add_subdirectory(Config)
+add_subdirectory(Watch)
 add_subdirectory(GUI)
 add_subdirectory(App)
 add_subdirectory(Plugins)
