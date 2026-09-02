@@ -1,0 +1,14 @@
+Package: httransfer
+Version: 1.0.0-alpha.10
+Architecture: amd64
+Maintainer: HTTransfer Team <wujupeng@users.noreply.github.com>
+Depends: libc6 (>= 2.36), libstdc++6 (>= 12)
+Section: utils
+Priority: optional
+Description: High-Performance Local File Copy Engine (Self-Contained)
+ HTTransfer is a world-class local file copy engine, similar to
+ FastCopy / TeraCopy / Robocopy (GUI version).
+ .
+ This is a self-contained package with all runtime dependencies bundled.
+ Install with: dpkg -i httransfer_1.0.0-alpha.10_amd64.deb
+ No internet connection or pre-installed dependencies required.

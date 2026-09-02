@@ -31,6 +31,11 @@ target_link_libraries(HTTransfer PRIVATE
     Qt6::Widgets
 )
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(HTTransfer PRIVATE blake3_static)
+    target_link_options(HTTransfer PRIVATE "-Wl,--enable-new-dtags")
+endif()
+
 get_target_property(MOC_EXE_APP Qt6::moc LOCATION)
 set(MOC_OUT_APP ${CMAKE_CURRENT_BINARY_DIR}/moc_Application.cpp)
 add_custom_command(

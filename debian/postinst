@@ -4,4 +4,21 @@ set -e
 update-desktop-database /usr/share/applications 2>/dev/null || true
 gtk-update-icon-cache /usr/share/icons/hicolor 2>/dev/null || true
 
+PRIVATE_LIB_DIR="/opt/huntertransfer/lib"
+PRIVATE_QT_CONF="/opt/huntertransfer/qt.conf"
+
+if [ -d "$PRIVATE_LIB_DIR" ]; then
+    for lib_name in libQt6Core.so.6 libQt6Widgets.so.6 libQt6Gui.so.6 libssl.so.3 libsqlite3.so.0 libzstd.so.1; do
+        if [ ! -f "$PRIVATE_LIB_DIR/$lib_name" ]; then
+            echo "Warning: Missing bundled library: $lib_name" >&2
+        fi
+    done
+else
+    echo "Warning: Private library directory not found: $PRIVATE_LIB_DIR" >&2
+fi
+
+if [ ! -f "$PRIVATE_QT_CONF" ]; then
+    echo "Warning: qt.conf missing, Qt plugins may fail to load" >&2
+fi
+
 exit 0
