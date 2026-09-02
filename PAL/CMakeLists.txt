@@ -10,6 +10,7 @@ target_include_directories(ht_pal PUBLIC
 target_link_libraries(ht_pal PUBLIC
     ht_core
     Qt6::Core
+    Qt6::Widgets
     Qt6::Network
 )
 
