@@ -1,0 +1,32 @@
+Source: httransfer
+Section: utils
+Priority: optional
+Maintainer: HTTransfer Team <wujupeng@users.noreply.github.com>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.25),
+               ninja-build,
+               g++ (>= 12),
+               qt6-base-dev (>= 6.4),
+               qt6-base-dev-tools (>= 6.4),
+               libssl-dev,
+               libsqlite3-dev,
+               libzstd-dev,
+               libblake3-dev,
+               liburing-dev
+Standards-Version: 4.7.0
+Homepage: https://github.com/wujupeng/HTTransfer
+
+Package: httransfer
+Architecture: amd64
+Depends: qt6-base-dev (>= 6.4),
+         libssl3 (>= 3.0),
+         libsqlite3-0,
+         libzstd1,
+         libblake3-0,
+         ${misc:Depends}
+Description: High-Performance Local File Copy Engine
+ HTTransfer is a world-class local file copy engine, similar to
+ FastCopy / TeraCopy / Robocopy (GUI version). Core capabilities:
+ ultra-large file (TB-level) stable copying, multi-threaded high
+ performance, automatic resume, data integrity verification,
+ scheduled incremental backup, system tray background running.

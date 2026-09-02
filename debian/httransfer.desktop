@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=HTTransfer
+GenericName=File Copy
+Comment=High-Performance Local File Copy Engine
+Exec=HTTransfer
+Icon=httransfer
+Terminal=false
+Categories=Utility;System;FileTools;
+StartupNotify=true
+Keywords=copy;transfer;backup;sync;file;

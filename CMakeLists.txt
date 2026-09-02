@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 project(HunterTransfer VERSION 0.1.0 LANGUAGES C CXX)
 
-set(HT_VERSION_PRERELEASE "alpha.8" CACHE STRING "Pre-release identifier" FORCE)
+set(HT_VERSION_PRERELEASE "alpha.9" CACHE STRING "Pre-release identifier" FORCE)
 
 if(HT_VERSION_PRERELEASE)
     set(HT_VERSION_STRING "${PROJECT_VERSION}-${HT_VERSION_PRERELEASE}")
@@ -34,7 +34,16 @@ if(WIN32)
         WIN32_LEAN_AND_MEAN
         NOMINMAX
         _WIN32_WINNT=0x0A00
+        HT_PLATFORM_WINDOWS
     )
+    message(STATUS "Platform: Windows")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_compile_definitions(HT_PLATFORM_LINUX)
+    add_compile_definitions(_FILE_OFFSET_BITS=64)
+    message(STATUS "Platform: Linux")
+else()
+    add_compile_definitions(HT_PLATFORM_UNSUPPORTED)
+    message(WARNING "Unsupported platform: ${CMAKE_SYSTEM_NAME}")
 endif()
 
 add_compile_definitions(
@@ -73,6 +82,7 @@ add_subdirectory(Verify)
 add_subdirectory(Logger)
 add_subdirectory(Config)
 add_subdirectory(Watch)
+add_subdirectory(PAL)
 add_subdirectory(GUI)
 add_subdirectory(App)
 add_subdirectory(Plugins)
